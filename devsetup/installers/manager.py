@@ -12,6 +12,7 @@ from typing import Dict, Type
 from devsetup.installers.base import BaseInstaller
 from devsetup.installers.git import GitInstaller
 from devsetup.installers.node import NodeInstaller
+from devsetup.installers.pip import PipInstaller
 from devsetup.installers.python import PythonInstaller
 from devsetup.installers.vscode import VSCodeInstaller
 from devsetup.utils.logger import info, error, success, warn
@@ -20,6 +21,7 @@ from devsetup.utils.logger import info, error, success, warn
 _REGISTRY: Dict[str, Type[BaseInstaller]] = {
     "git": GitInstaller,
     "node": NodeInstaller,
+    "pip": PipInstaller,
     "python": PythonInstaller,
     "vscode": VSCodeInstaller,
 }
