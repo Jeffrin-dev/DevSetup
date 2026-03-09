@@ -58,9 +58,11 @@ def install_tool(tool_name: str) -> None:
 
 def install_environment(tools: list) -> None:
     """Install all tools defined in an environment config."""
-    for tool_name in tools:
+    total = len(tools)
+    for index, tool_name in enumerate(tools, start=1):
+        info(f"[{index}/{total}] Installing {tool_name}")
         install_tool(tool_name)
-    success("Installation complete.")
+    success("Environment setup complete.")
 
 
 def list_tools() -> Dict[str, str]:
