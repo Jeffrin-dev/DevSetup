@@ -1,0 +1,6 @@
+{
+  "schema": "1.0",
+  "name": "python",
+  "description": "Python development environment with pip and VS Code.",
+  "tools": ["python", "pip", "vscode"]
+}
