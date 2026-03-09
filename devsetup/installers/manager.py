@@ -1,0 +1,85 @@
+"""
+devsetup.installers.manager
+----------------------------
+Installer manager / registry.
+
+The CLI calls this module — it never calls individual installers directly.
+Contains no OS logic.  Contains no environment loading logic.
+"""
+
+from typing import Dict, Type
+
+from devsetup.installers.base import BaseInstaller
+from devsetup.installers.git import GitInstaller
+from devsetup.installers.node import NodeInstaller
+from devsetup.installers.python import PythonInstaller
+from devsetup.installers.vscode import VSCodeInstaller
+from devsetup.utils.logger import info, error, success, warn
+
+# Registry: tool name → installer class
+_REGISTRY: Dict[str, Type[BaseInstaller]] = {
+    "git": GitInstaller,
+    "node": NodeInstaller,
+    "python": PythonInstaller,
+    "vscode": VSCodeInstaller,
+}
+
+
+def get_installer(tool_name: str) -> BaseInstaller:
+    """
+    Return an installer instance for the given tool name.
+
+    Raises
+    ------
+    KeyError
+        If the tool name is not registered.
+    """
+    if tool_name not in _REGISTRY:
+        raise KeyError(
+            f"Unknown tool '{tool_name}'. "
+            f"Available tools: {list(_REGISTRY.keys())}"
+        )
+    return _REGISTRY[tool_name]()
+
+
+def install_tool(tool_name: str) -> None:
+    """Detect and, if necessary, install a single tool."""
+    installer = get_installer(tool_name)
+
+    if installer.detect():
+        ver = installer.version()
+        info(f"{tool_name} is already installed ({ver}). Skipping.")
+        return
+
+    info(f"Installing {tool_name}...")
+    installer.install()
+    success(f"{tool_name} installation complete.")
+
+
+def install_environment(tools: list) -> None:
+    """Install all tools defined in an environment config."""
+    for tool_name in tools:
+        install_tool(tool_name)
+    success("Installation complete.")
+
+
+def list_tools() -> Dict[str, str]:
+    """
+    Return a dict of tool → version for all registered tools.
+    Version is 'not installed' if the tool is absent.
+    """
+    result = {}
+    for name, cls in _REGISTRY.items():
+        installer = cls()
+        result[name] = installer.version() if installer.detect() else "not installed"
+    return result
+
+
+def tool_info(tool_name: str) -> Dict[str, str]:
+    """Return detection status and version for a single tool."""
+    installer = get_installer(tool_name)
+    return {
+        "tool": tool_name,
+        "installed": str(installer.detect()),
+        "version": installer.version(),
+    }
