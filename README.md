@@ -10,14 +10,17 @@ your team needs, on any operating system, with a single command.
 ## Quick Start
 
 ```bash
+# List all available environments
+devsetup list
+
 # Install the web development environment
 devsetup install web
 
+# Install the Python development environment
+devsetup install python
+
 # Install a single tool
 devsetup install --tool git
-
-# List all tools and their versions
-devsetup list
 
 # Show info for a specific tool
 devsetup info node
@@ -41,6 +44,28 @@ python -m devsetup --help
 
 ---
 
+## Supported Environments
+
+### Web
+Installs the full web development stack.
+
+```bash
+devsetup install web
+```
+
+Tools installed: Git, Node.js, VS Code
+
+### Python
+Installs a Python development environment.
+
+```bash
+devsetup install python
+```
+
+Tools installed: Python 3, pip, VS Code
+
+---
+
 ## Project Structure
 
 ```
@@ -57,12 +82,14 @@ DevSetup/
 │   │   ├── manager.py        ← registry & dispatch
 │   │   ├── git.py
 │   │   ├── node.py
+│   │   ├── pip.py
 │   │   ├── python.py
 │   │   └── vscode.py
 │   └── utils/
 │       └── logger.py         ← all output routed through here
 ├── environments/
 │   ├── web.json
+│   ├── python.json
 │   └── data-science.json
 ├── plugins/                  ← user plugins loaded from ~/.devsetup/plugins/
 ├── pyproject.toml
@@ -76,9 +103,9 @@ DevSetup/
 
 | Command                       | Description                              |
 |-------------------------------|------------------------------------------|
+| `devsetup list`               | List all available environments          |
 | `devsetup install <env>`      | Install all tools for an environment     |
 | `devsetup install --tool <t>` | Install a single named tool              |
-| `devsetup list`               | List all tools and installed versions    |
 | `devsetup info <tool>`        | Show details for a specific tool         |
 | `devsetup --version`          | Print the DevSetup version               |
 | `devsetup --help`             | Show usage guide                         |
@@ -92,8 +119,9 @@ Environments are defined as versioned JSON files in `environments/`.
 ```json
 {
   "schema": "1.0",
-  "name": "web",
-  "tools": ["git", "node", "vscode"]
+  "name": "python",
+  "description": "Python development environment with pip and VS Code.",
+  "tools": ["python", "pip", "vscode"]
 }
 ```
 
@@ -122,8 +150,7 @@ Plugin failures are sandboxed and will never crash DevSetup.
 
 ## Architecture Rules
 
-This project enforces 10 architecture rules documented in `ARCHITECTURE.md`
-(or the project wiki). Key principles:
+This project enforces 10 architecture rules. Key principles:
 
 - CLI contains **no business logic**
 - Every tool has its **own isolated installer**
