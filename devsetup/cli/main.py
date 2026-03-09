@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── devsetup list ─────────────────────────────────────────────────────────
     subparsers.add_parser(
         "list",
-        help="List all registered tools and their installation status.",
+        help="List all available environments.",
     )
 
     # ── devsetup info ─────────────────────────────────────────────────────────
@@ -117,9 +117,19 @@ def cmd_install(args: argparse.Namespace) -> int:
 
 def cmd_list(_args: argparse.Namespace) -> int:
     """Handle: devsetup list"""
-    tools = installer_manager.list_tools()
-    for tool, version in tools.items():
-        info(f"{tool:<12} {version}")
+    try:
+        environments = environment_loader.list_available()
+    except Exception as exc:
+        error(f"Failed to load environments: {exc}")
+        return 1
+
+    if not environments:
+        info("No environments available.")
+        return 0
+
+    info("Available environments:\n")
+    for env_name in sorted(environments):
+        info(f"  {env_name}")
     return 0
 
 
