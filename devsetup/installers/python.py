@@ -3,16 +3,16 @@ devsetup.installers.python
 --------------------------
 Isolated installer module for Python 3.
 
-All OS-specific branching lives here (Architecture Rule 5).
+OS detection is delegated to devsetup.system.os_detector (Architecture Rule 5).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
-import platform
 import shutil
 import subprocess
 import sys
 
 from devsetup.installers.base import BaseInstaller
+from devsetup.system.os_detector import get_os, LINUX, MACOS, WINDOWS
 from devsetup.utils.logger import info, error
 
 
@@ -25,20 +25,20 @@ class PythonInstaller(BaseInstaller):
 
     def install(self) -> None:
         """Install Python 3 using the OS-appropriate method."""
-        os_name = platform.system().lower()
+        os_name = get_os()
 
-        if os_name == "linux":
+        if os_name == LINUX:
             info("Installing Python 3 via apt-get...")
             subprocess.run(
                 ["sudo", "apt-get", "install", "-y", "python3", "python3-pip"],
                 check=True,
             )
 
-        elif os_name == "darwin":
+        elif os_name == MACOS:
             info("Installing Python 3 via Homebrew...")
             subprocess.run(["brew", "install", "python3"], check=True)
 
-        elif os_name == "windows":
+        elif os_name == WINDOWS:
             info("Installing Python 3 via winget...")
             subprocess.run(
                 ["winget", "install", "--id", "Python.Python.3", "-e"],
