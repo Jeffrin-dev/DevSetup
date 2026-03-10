@@ -3,7 +3,7 @@ devsetup.installers.python
 --------------------------
 Isolated installer module for Python 3.
 
-OS detection is delegated to devsetup.system.os_detector (Architecture Rule 5).
+Uses PackageManagerRunner for installation (Architecture Rule 5).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
@@ -12,8 +12,8 @@ import subprocess
 import sys
 
 from devsetup.installers.base import BaseInstaller
-from devsetup.system.os_detector import get_os, LINUX, MACOS, WINDOWS
-from devsetup.utils.logger import info, error
+from devsetup.system.package_managers import PackageManagerRunner
+from devsetup.utils.package_loader import load_package_name
 
 
 class PythonInstaller(BaseInstaller):
@@ -24,30 +24,10 @@ class PythonInstaller(BaseInstaller):
         return shutil.which("python3") is not None or shutil.which("python") is not None
 
     def install(self) -> None:
-        """Install Python 3 using the OS-appropriate method."""
-        os_name = get_os()
-
-        if os_name == LINUX:
-            info("Installing Python 3 via apt-get...")
-            subprocess.run(
-                ["sudo", "apt-get", "install", "-y", "python3", "python3-pip"],
-                check=True,
-            )
-
-        elif os_name == MACOS:
-            info("Installing Python 3 via Homebrew...")
-            subprocess.run(["brew", "install", "python3"], check=True)
-
-        elif os_name == WINDOWS:
-            info("Installing Python 3 via winget...")
-            subprocess.run(
-                ["winget", "install", "--id", "Python.Python.3", "-e"],
-                check=True,
-            )
-
-        else:
-            error(f"Unsupported OS: {os_name}. Please install Python 3 manually.")
-            raise RuntimeError(f"Cannot install python on unsupported OS: {os_name}")
+        """Install Python 3 using the active system package manager."""
+        pm = PackageManagerRunner()
+        package = load_package_name("python", pm.name)
+        pm.install(package)
 
     def version(self) -> str:
         """Return the installed Python version string."""
