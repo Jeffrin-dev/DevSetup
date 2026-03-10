@@ -1,0 +1,7 @@
+{
+  "apt":    "git",
+  "dnf":    "git",
+  "pacman": "git",
+  "brew":   "git",
+  "winget": "Git.Git"
+}
