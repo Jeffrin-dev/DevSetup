@@ -1,0 +1,7 @@
+{
+  "apt":    "nodejs",
+  "dnf":    "nodejs",
+  "pacman": "nodejs",
+  "brew":   "node",
+  "winget": "OpenJS.NodeJS"
+}
