@@ -3,15 +3,15 @@ devsetup.installers.vscode
 --------------------------
 Isolated installer module for Visual Studio Code.
 
-All OS-specific branching lives here (Architecture Rule 5).
+OS detection is delegated to devsetup.system.os_detector (Architecture Rule 5).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
-import platform
 import shutil
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
+from devsetup.system.os_detector import get_os, LINUX, MACOS, WINDOWS
 from devsetup.utils.logger import info, error
 
 
@@ -24,17 +24,17 @@ class VSCodeInstaller(BaseInstaller):
 
     def install(self) -> None:
         """Install VS Code using the OS-appropriate method."""
-        os_name = platform.system().lower()
+        os_name = get_os()
 
-        if os_name == "linux":
+        if os_name == LINUX:
             info("Installing VS Code via snap...")
             subprocess.run(["sudo", "snap", "install", "--classic", "code"], check=True)
 
-        elif os_name == "darwin":
+        elif os_name == MACOS:
             info("Installing VS Code via Homebrew cask...")
             subprocess.run(["brew", "install", "--cask", "visual-studio-code"], check=True)
 
-        elif os_name == "windows":
+        elif os_name == WINDOWS:
             info("Installing VS Code via winget...")
             subprocess.run(
                 ["winget", "install", "--id", "Microsoft.VisualStudioCode", "-e"],
@@ -52,5 +52,4 @@ class VSCodeInstaller(BaseInstaller):
         result = subprocess.run(
             ["code", "--version"], capture_output=True, text=True, check=True
         )
-        # First line is the version number
         return result.stdout.splitlines()[0].strip()
