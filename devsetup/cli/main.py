@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  devsetup install web\n"
+            "  devsetup install python\n"
             "  devsetup install --tool git\n"
             "  devsetup list\n"
             "  devsetup info git\n"
@@ -59,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     install_group.add_argument(
         "environment",
         nargs="?",
-        help="Name of the environment to install (e.g. web).",
+        help="ID of the environment to install (e.g. web, python).",
     )
     install_group.add_argument(
         "--tool",
@@ -98,16 +99,16 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     else:
         # Environment install
-        env_name = args.environment
+        env_id = args.environment
         try:
-            env = environment_loader.load(env_name)
+            env = environment_loader.load(env_id)
         except (FileNotFoundError, ValueError) as exc:
             error(str(exc))
             return 1
 
         info(f"Installing environment: {env['name']}")
         try:
-            installer_manager.install_environment(env["tools"])
+            installer_manager.install_environment(env["installers"])
         except Exception as exc:
             error(f"Environment installation failed: {exc}")
             return 1
@@ -128,8 +129,8 @@ def cmd_list(_args: argparse.Namespace) -> int:
         return 0
 
     info("Available environments:\n")
-    for env_name in sorted(environments):
-        info(f"  {env_name}")
+    for env_id in environments:
+        info(f"  {env_id}")
     return 0
 
 
