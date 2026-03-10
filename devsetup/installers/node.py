@@ -3,15 +3,15 @@ devsetup.installers.node
 ------------------------
 Isolated installer module for Node.js.
 
-All OS-specific branching lives here (Architecture Rule 5).
+OS detection is delegated to devsetup.system.os_detector (Architecture Rule 5).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
-import platform
 import shutil
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
+from devsetup.system.os_detector import get_os, LINUX, MACOS, WINDOWS
 from devsetup.utils.logger import info, error
 
 
@@ -24,17 +24,17 @@ class NodeInstaller(BaseInstaller):
 
     def install(self) -> None:
         """Install Node.js using the OS-appropriate method."""
-        os_name = platform.system().lower()
+        os_name = get_os()
 
-        if os_name == "linux":
+        if os_name == LINUX:
             info("Installing Node.js via apt-get...")
             subprocess.run(["sudo", "apt-get", "install", "-y", "nodejs", "npm"], check=True)
 
-        elif os_name == "darwin":
+        elif os_name == MACOS:
             info("Installing Node.js via Homebrew...")
             subprocess.run(["brew", "install", "node"], check=True)
 
-        elif os_name == "windows":
+        elif os_name == WINDOWS:
             info("Installing Node.js via winget...")
             subprocess.run(
                 ["winget", "install", "--id", "OpenJS.NodeJS", "-e"],
