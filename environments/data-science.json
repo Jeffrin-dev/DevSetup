@@ -1,5 +1,7 @@
 {
   "schema": "1.0",
-  "name": "data-science",
-  "tools": ["git", "python"]
+  "id": "data-science",
+  "name": "Data Science",
+  "description": "Data science environment with Python, pip, and VS Code.",
+  "installers": ["python", "pip", "vscode"]
 }
