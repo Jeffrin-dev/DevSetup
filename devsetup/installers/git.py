@@ -3,15 +3,15 @@ devsetup.installers.git
 -----------------------
 Isolated installer module for Git.
 
-All OS-specific branching lives here (Architecture Rule 5).
+OS detection is delegated to devsetup.system.os_detector (Architecture Rule 5).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
-import platform
 import shutil
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
+from devsetup.system.os_detector import get_os, LINUX, MACOS, WINDOWS
 from devsetup.utils.logger import info, error
 
 
@@ -24,17 +24,17 @@ class GitInstaller(BaseInstaller):
 
     def install(self) -> None:
         """Install git using the OS-appropriate package manager."""
-        os_name = platform.system().lower()
+        os_name = get_os()
 
-        if os_name == "linux":
+        if os_name == LINUX:
             info("Installing git via apt-get...")
             subprocess.run(["sudo", "apt-get", "install", "-y", "git"], check=True)
 
-        elif os_name == "darwin":
+        elif os_name == MACOS:
             info("Installing git via Homebrew...")
             subprocess.run(["brew", "install", "git"], check=True)
 
-        elif os_name == "windows":
+        elif os_name == WINDOWS:
             info("Installing git via winget...")
             subprocess.run(
                 ["winget", "install", "--id", "Git.Git", "-e", "--source", "winget"],
