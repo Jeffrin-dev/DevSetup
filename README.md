@@ -2,7 +2,7 @@
 
 > Automated developer environment setup — one command to install everything.
 
-DevSetup reads a simple JSON configuration file and installs all the tools
+DevSetup reads simple JSON configuration files and installs all the tools
 your team needs, on any operating system, with a single command.
 
 ---
@@ -47,22 +47,108 @@ python -m devsetup --help
 ## Supported Environments
 
 ### Web
-Installs the full web development stack.
-
 ```bash
 devsetup install web
 ```
-
 Tools installed: Git, Node.js, VS Code
 
 ### Python
-Installs a Python development environment.
-
 ```bash
 devsetup install python
 ```
-
 Tools installed: Python 3, pip, VS Code
+
+### Data Science
+```bash
+devsetup install data-science
+```
+Tools installed: Python 3, pip, VS Code
+
+---
+
+## Creating a New Environment
+
+Adding a new environment requires **no code changes** — just create a JSON file.
+
+1. Create a new file in `environments/`:
+
+```bash
+environments/go.json
+```
+
+2. Define the environment:
+
+```json
+{
+  "schema": "1.0",
+  "id": "go",
+  "name": "Go Development",
+  "description": "Go development environment.",
+  "installers": ["git", "vscode"]
+}
+```
+
+3. Run it immediately:
+
+```bash
+devsetup install go
+devsetup list
+```
+
+The environment is automatically discovered — no restarts, no code edits.
+
+---
+
+## Architecture
+
+```
+CLI
+ │
+ ▼
+Environment Loader            (core/environment_loader.py)
+ │  scans environments/ dynamically
+ ▼
+Environment Registry          (environments/*.json)
+ │  id, name, description, installers list
+ ▼
+Installer IDs                 (["python", "pip", "vscode"])
+ │
+ ▼
+Installer Registry            (installers/manager.py)
+ │  maps IDs to installer classes
+ ▼
+Installer Modules             (installers/git.py, node.py, ...)
+```
+
+Each layer has a single responsibility:
+
+- **CLI** — parses commands, no business logic
+- **Environment Loader** — scans directory, parses JSON, validates schema
+- **Environment Registry** — JSON config files, one per environment
+- **Installer Registry** — maps tool names to installer classes
+- **Installer Modules** — isolated per tool, OS-specific logic contained inside
+
+---
+
+## Environment Configuration Schema
+
+```json
+{
+  "schema": "1.0",
+  "id": "web",
+  "name": "Web Development",
+  "description": "Full web development stack.",
+  "installers": ["git", "node", "vscode"]
+}
+```
+
+| Field | Purpose |
+|---|---|
+| `schema` | Config schema version for backward compatibility |
+| `id` | Unique identifier used in CLI commands |
+| `name` | Human-readable display name |
+| `description` | Short description of the environment |
+| `installers` | Ordered list of installer IDs to execute |
 
 ---
 
@@ -76,10 +162,10 @@ DevSetup/
 │   ├── cli/
 │   │   └── main.py           ← argument parsing only, no business logic
 │   ├── core/
-│   │   └── environment_loader.py  ← reads & validates JSON configs
+│   │   └── environment_loader.py  ← dynamic loader, validates & registers envs
 │   ├── installers/
 │   │   ├── base.py           ← standard installer interface
-│   │   ├── manager.py        ← registry & dispatch
+│   │   ├── manager.py        ← installer registry & dispatch
 │   │   ├── git.py
 │   │   ├── node.py
 │   │   ├── pip.py
@@ -91,7 +177,7 @@ DevSetup/
 │   ├── web.json
 │   ├── python.json
 │   └── data-science.json
-├── plugins/                  ← user plugins loaded from ~/.devsetup/plugins/
+├── plugins/
 ├── pyproject.toml
 ├── LICENSE
 └── README.md
@@ -112,23 +198,6 @@ DevSetup/
 
 ---
 
-## Environment Configuration
-
-Environments are defined as versioned JSON files in `environments/`.
-
-```json
-{
-  "schema": "1.0",
-  "name": "python",
-  "description": "Python development environment with pip and VS Code.",
-  "tools": ["python", "pip", "vscode"]
-}
-```
-
-To add a new environment, create a new `.json` file — no source code changes needed.
-
----
-
 ## Adding a Tool Installer
 
 1. Create `devsetup/installers/<toolname>.py`
@@ -141,22 +210,10 @@ All OS-specific logic must stay inside the installer module.
 
 ## Plugin System
 
-Drop a Python module into `~/.devsetup/plugins/` to register custom tools or
-environments. See `plugins/README.md` for the plugin API.
+Drop a Python module into `~/.devsetup/plugins/` to register custom tools.
+See `plugins/README.md` for the plugin API.
 
 Plugin failures are sandboxed and will never crash DevSetup.
-
----
-
-## Architecture Rules
-
-This project enforces 10 architecture rules. Key principles:
-
-- CLI contains **no business logic**
-- Every tool has its **own isolated installer**
-- Environments are **configuration-driven** (JSON only)
-- All installers implement a **standard interface**
-- OS-specific logic is **contained inside installers**
 
 ---
 
