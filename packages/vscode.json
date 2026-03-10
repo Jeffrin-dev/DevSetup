@@ -1,0 +1,7 @@
+{
+  "apt":    null,
+  "dnf":    null,
+  "pacman": "code",
+  "brew":   "--cask visual-studio-code",
+  "winget": "Microsoft.VisualStudioCode"
+}
