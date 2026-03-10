@@ -3,17 +3,16 @@ devsetup.installers.pip
 -----------------------
 Isolated installer module for pip.
 
-pip usually ships with Python but must be explicitly verified.
-All OS-specific branching lives here (Architecture Rule 5).
+OS detection is delegated to devsetup.system.os_detector (Architecture Rule 5).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
-import platform
 import shutil
 import subprocess
 import sys
 
 from devsetup.installers.base import BaseInstaller
+from devsetup.system.os_detector import get_os, LINUX, MACOS, WINDOWS
 from devsetup.utils.logger import info, error
 
 
@@ -26,23 +25,23 @@ class PipInstaller(BaseInstaller):
 
     def install(self) -> None:
         """Bootstrap pip using the OS-appropriate method."""
-        os_name = platform.system().lower()
+        os_name = get_os()
 
-        if os_name == "linux":
+        if os_name == LINUX:
             info("Installing pip via apt-get...")
             subprocess.run(
                 ["sudo", "apt-get", "install", "-y", "python3-pip"],
                 check=True,
             )
 
-        elif os_name == "darwin":
+        elif os_name == MACOS:
             info("Bootstrapping pip via Python...")
             subprocess.run(
                 [sys.executable, "-m", "ensurepip", "--upgrade"],
                 check=True,
             )
 
-        elif os_name == "windows":
+        elif os_name == WINDOWS:
             info("Bootstrapping pip via Python...")
             subprocess.run(
                 [sys.executable, "-m", "ensurepip", "--upgrade"],
