@@ -15,7 +15,7 @@ from devsetup.installers.node import NodeInstaller
 from devsetup.installers.pip import PipInstaller
 from devsetup.installers.python import PythonInstaller
 from devsetup.installers.vscode import VSCodeInstaller
-from devsetup.utils.logger import info, error, success, warn
+from devsetup.utils.logger import info, error, success, warn, check, skip, install
 
 # Registry: tool name → installer class
 _REGISTRY: Dict[str, Type[BaseInstaller]] = {
@@ -38,8 +38,8 @@ def get_installer(tool_name: str) -> BaseInstaller:
     """
     if tool_name not in _REGISTRY:
         raise KeyError(
-            f"Unknown tool '{tool_name}'. "
-            f"Available tools: {list(_REGISTRY.keys())}"
+            f"Installer '{tool_name}' not found. "
+            f"Available installers: {list(_REGISTRY.keys())}"
         )
     return _REGISTRY[tool_name]()
 
@@ -48,14 +48,16 @@ def install_tool(tool_name: str) -> None:
     """Detect and, if necessary, install a single tool."""
     installer = get_installer(tool_name)
 
+    check(tool_name)
+
     if installer.detect():
         ver = installer.version()
-        info(f"{tool_name} is already installed ({ver}). Skipping.")
+        skip(f"{tool_name} already installed ({ver})")
         return
 
-    info(f"Installing {tool_name}...")
+    install(tool_name)
     installer.install()
-    success(f"{tool_name} installation complete.")
+    success(f"{tool_name} installed successfully.")
 
 
 def install_environment(tools: list) -> None:
