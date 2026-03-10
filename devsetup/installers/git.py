@@ -3,7 +3,7 @@ devsetup.installers.git
 -----------------------
 Isolated installer module for Git.
 
-OS detection is delegated to devsetup.system.os_detector (Architecture Rule 5).
+Uses PackageManagerRunner for installation (Architecture Rule 5).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
@@ -11,8 +11,8 @@ import shutil
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
-from devsetup.system.os_detector import get_os, LINUX, MACOS, WINDOWS
-from devsetup.utils.logger import info, error
+from devsetup.system.package_managers import PackageManagerRunner
+from devsetup.utils.package_loader import load_package_name
 
 
 class GitInstaller(BaseInstaller):
@@ -23,27 +23,10 @@ class GitInstaller(BaseInstaller):
         return shutil.which("git") is not None
 
     def install(self) -> None:
-        """Install git using the OS-appropriate package manager."""
-        os_name = get_os()
-
-        if os_name == LINUX:
-            info("Installing git via apt-get...")
-            subprocess.run(["sudo", "apt-get", "install", "-y", "git"], check=True)
-
-        elif os_name == MACOS:
-            info("Installing git via Homebrew...")
-            subprocess.run(["brew", "install", "git"], check=True)
-
-        elif os_name == WINDOWS:
-            info("Installing git via winget...")
-            subprocess.run(
-                ["winget", "install", "--id", "Git.Git", "-e", "--source", "winget"],
-                check=True,
-            )
-
-        else:
-            error(f"Unsupported OS: {os_name}. Please install git manually.")
-            raise RuntimeError(f"Cannot install git on unsupported OS: {os_name}")
+        """Install git using the active system package manager."""
+        pm = PackageManagerRunner()
+        package = load_package_name("git", pm.name)
+        pm.install(package)
 
     def version(self) -> str:
         """Return the installed git version string."""
