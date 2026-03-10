@@ -1,5 +1,7 @@
 {
   "schema": "1.0",
-  "name": "web",
-  "tools": ["git", "node", "vscode"]
+  "id": "web",
+  "name": "Web Development",
+  "description": "Full web development stack with Git, Node.js, and VS Code.",
+  "installers": ["git", "node", "vscode"]
 }
