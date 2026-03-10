@@ -135,9 +135,9 @@ def _validate(data: Dict[str, Any], source: str) -> None:
         )
 
     # Validate all installer IDs exist in the installer registry
-    from devsetup.installers.manager import _REGISTRY
+    from devsetup.installers.manager import is_registered
     for installer_id in data["installers"]:
-        if installer_id not in _REGISTRY:
+        if not is_registered(installer_id):
             raise ValueError(
                 f"Installer '{installer_id}' not found in registry. "
                 f"Referenced in {source}.json."
