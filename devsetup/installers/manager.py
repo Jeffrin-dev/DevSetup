@@ -15,6 +15,7 @@ from devsetup.installers.node import NodeInstaller
 from devsetup.installers.pip import PipInstaller
 from devsetup.installers.python import PythonInstaller
 from devsetup.installers.vscode import VSCodeInstaller
+from devsetup.system.os_detector import get_os
 from devsetup.utils.logger import info, error, success, warn, check, skip, install
 
 # Registry: tool name → installer class
@@ -62,9 +63,16 @@ def install_tool(tool_name: str) -> None:
 
 def install_environment(tools: list) -> None:
     """Install all tools defined in an environment config."""
+    try:
+        current_os = get_os()
+        info(f"Detected OS: {current_os}")
+    except RuntimeError as exc:
+        error(str(exc))
+        raise
+
     total = len(tools)
     for index, tool_name in enumerate(tools, start=1):
-        info(f"[{index}/{total}] Installing {tool_name}")
+        info(f"[{index}/{total}] Installing {tool_name} ({current_os})")
         install_tool(tool_name)
     success("Environment setup complete.")
 
