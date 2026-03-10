@@ -1,3 +1,3 @@
-from devsetup.utils.logger import info, error, success, warn
+from devsetup.utils.logger import info, error, success, warn, check, skip, install
 
-__all__ = ["info", "error", "success", "warn"]
+__all__ = ["info", "error", "success", "warn", "check", "skip", "install"]
