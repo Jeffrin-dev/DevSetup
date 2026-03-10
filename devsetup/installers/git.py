@@ -4,13 +4,14 @@ devsetup.installers.git
 Isolated installer module for Git.
 
 Uses PackageManagerRunner for installation (Architecture Rule 5).
+Uses command_detector for reliable tool detection (Phase 9).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
-import shutil
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
+from devsetup.system.command_detector import command_runs
 from devsetup.system.package_managers import PackageManagerRunner
 from devsetup.utils.package_loader import load_package_name
 
@@ -19,8 +20,8 @@ class GitInstaller(BaseInstaller):
     tool_name = "git"
 
     def detect(self) -> bool:
-        """Return True if git is available on PATH."""
-        return shutil.which("git") is not None
+        """Return True if git is on PATH and executes successfully."""
+        return command_runs("git")
 
     def install(self) -> None:
         """Install git using the active system package manager."""
