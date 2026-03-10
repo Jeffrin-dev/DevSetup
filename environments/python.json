@@ -1,6 +1,7 @@
 {
   "schema": "1.0",
-  "name": "python",
+  "id": "python",
+  "name": "Python Development",
   "description": "Python development environment with pip and VS Code.",
-  "tools": ["python", "pip", "vscode"]
+  "installers": ["python", "pip", "vscode"]
 }
