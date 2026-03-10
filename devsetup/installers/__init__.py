@@ -5,6 +5,7 @@ from devsetup.installers.manager import (
     install_environment,
     list_tools,
     tool_info,
+    is_registered,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "install_environment",
     "list_tools",
     "tool_info",
+    "is_registered",
 ]
