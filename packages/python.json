@@ -1,0 +1,7 @@
+{
+  "apt":    "python3",
+  "dnf":    "python3",
+  "pacman": "python",
+  "brew":   "python3",
+  "winget": "Python.Python.3"
+}
