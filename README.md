@@ -3,26 +3,17 @@
 > Automated developer environment setup — one command to install everything.
 
 DevSetup reads simple JSON configuration files and installs all the tools
-your team needs, on any operating system, with a single command.
+your team needs, on any operating system, using native system package managers.
 
 ---
 
 ## Quick Start
 
 ```bash
-# List all available environments
 devsetup list
-
-# Install the web development environment
 devsetup install web
-
-# Install the Python development environment
 devsetup install python
-
-# Install a single tool
 devsetup install --tool git
-
-# Show info for a specific tool
 devsetup info node
 ```
 
@@ -34,56 +25,33 @@ devsetup info node
 pip install .
 ```
 
-After installation the `devsetup` command is available globally.
-
-You can also run without installing:
-
-```bash
-python -m devsetup --help
-```
-
 ---
 
 ## Supported Platforms
 
-| OS | Status |
+| OS | Package Managers |
 |---|---|
-| Linux | ✅ Supported |
-| macOS | ✅ Supported |
-| Windows | ✅ Supported |
+| Linux | apt · dnf · pacman |
+| macOS | brew |
+| Windows | winget |
 
-DevSetup automatically detects the operating system at runtime and runs
-the correct installation path for each tool.
+DevSetup automatically detects the OS and active package manager at runtime.
 
 ---
 
 ## Supported Environments
 
-### Web
-```bash
-devsetup install web
-```
-Tools installed: Git, Node.js, VS Code
-
-### Python
-```bash
-devsetup install python
-```
-Tools installed: Python 3, pip, VS Code
-
-### Data Science
-```bash
-devsetup install data-science
-```
-Tools installed: Python 3, pip, VS Code
+| Environment | Tools |
+|---|---|
+| `web` | git, node, vscode |
+| `python` | python, pip, vscode |
+| `data-science` | python, pip, vscode |
 
 ---
 
 ## Creating a New Environment
 
-Adding a new environment requires **no code changes** — just create a JSON file.
-
-1. Create a new file in `environments/`:
+No code changes required. Create a JSON file:
 
 ```json
 {
@@ -95,57 +63,81 @@ Adding a new environment requires **no code changes** — just create a JSON fil
 }
 ```
 
-2. Run it immediately:
+Then run it:
 
 ```bash
 devsetup install go
-devsetup list
 ```
 
 ---
 
-## Cross-Platform Architecture
+## Package Manager Architecture
 
-DevSetup uses a centralized OS detection module that provides a clean,
-normalized API to all installer modules.
-
-### OS Detection
+### Detection Pipeline
 
 ```
 devsetup install web
         │
         ▼
-OS Detector (system/os_detector.py)
+OS Detector          → linux | macos | windows
         │
         ▼
-Normalized OS: linux | macos | windows
+PM Detector          → apt | dnf | pacman | brew | winget
         │
         ▼
-Installer OS Branch
+PackageManagerRunner → unified install(package) interface
+        │
+        ▼
+Installer Modules    → git.py, node.py, ...
+        │
+        ▼
+Package Name Mapping → packages/git.json → "git" (apt) / "Git.Git" (winget)
+        │
+        ▼
+System Package Manager
 ```
 
-### Normalized OS identifiers
+### Package Manager Commands
 
-| Raw platform value | Normalized |
+| Manager | Install command |
 |---|---|
-| `linux` | `linux` |
-| `darwin` | `macos` |
-| `win32` / `windows` | `windows` |
+| apt | `sudo apt-get install -y <package>` |
+| dnf | `sudo dnf install -y <package>` |
+| pacman | `sudo pacman -S --noconfirm <package>` |
+| brew | `brew install <package>` |
+| winget | `winget install --id <package> -e` |
 
-### Installer OS branching
+### Package Name Mapping
 
-Each installer contains OS branches internally:
+Some tools have different package names per manager. Mappings live in `packages/`:
+
+```json
+{
+  "apt":    "git",
+  "dnf":    "git",
+  "pacman": "git",
+  "brew":   "git",
+  "winget": "Git.Git"
+}
+```
+
+Add a new tool mapping by creating `packages/<toolname>.json` — no code changes needed.
+
+### Example Install Log
 
 ```
-install()
-   │
-   ├─ linux   → apt-get
-   ├─ macos   → brew
-   └─ windows → winget
+[INFO]    Installing environment: Web Development
+[INFO]    Detected OS: linux
+[INFO]    Detected package manager: apt
+[INFO]    [1/3] Installing git (linux / apt)
+[CHECK]   git
+[SKIP]    git already installed (git version 2.43.0)
+[INFO]    [2/3] Installing node (linux / apt)
+[CHECK]   node
+[INSTALL] node
+[INFO]    Installing nodejs using apt...
+[OK]      node installed successfully.
 ```
-
-All OS detection is centralized in `devsetup/system/os_detector.py`.
-No installer calls `platform.system()` directly.
 
 ---
 
@@ -161,16 +153,25 @@ Environment Loader            (core/environment_loader.py)
 Environment Registry          (environments/*.json)
  │
  ▼
-Installer IDs                 (["python", "pip", "vscode"])
- │
- ▼
 Installer Registry            (installers/manager.py)
  │
  ▼
 OS Detector                   (system/os_detector.py)
  │
  ▼
+Package Manager Detector      (system/package_manager_detector.py)
+ │
+ ▼
+Package Manager Runner        (system/package_managers/runner.py)
+ │
+ ▼
 Installer Modules             (installers/git.py, node.py, ...)
+ │
+ ▼
+Package Name Mapping          (packages/*.json)
+ │
+ ▼
+System Package Manager
 ```
 
 ---
@@ -187,7 +188,15 @@ DevSetup/
 │   ├── core/
 │   │   └── environment_loader.py
 │   ├── system/
-│   │   └── os_detector.py        ← centralized OS detection
+│   │   ├── os_detector.py
+│   │   ├── package_manager_detector.py
+│   │   └── package_managers/
+│   │       ├── runner.py
+│   │       ├── apt_manager.py
+│   │       ├── dnf_manager.py
+│   │       ├── pacman_manager.py
+│   │       ├── brew_manager.py
+│   │       └── winget_manager.py
 │   ├── installers/
 │   │   ├── base.py
 │   │   ├── manager.py
@@ -197,50 +206,33 @@ DevSetup/
 │   │   ├── python.py
 │   │   └── vscode.py
 │   └── utils/
-│       └── logger.py
+│       ├── logger.py
+│       └── package_loader.py
 ├── environments/
 │   ├── web.json
 │   ├── python.json
 │   └── data-science.json
-├── plugins/
-├── pyproject.toml
-├── LICENSE
-└── README.md
+├── packages/
+│   ├── git.json
+│   ├── node.json
+│   ├── pip.json
+│   ├── python.json
+│   └── vscode.json
+└── plugins/
 ```
 
 ---
 
 ## CLI Commands
 
-| Command                       | Description                              |
-|-------------------------------|------------------------------------------|
-| `devsetup list`               | List all available environments          |
-| `devsetup install <env>`      | Install all tools for an environment     |
-| `devsetup install --tool <t>` | Install a single named tool              |
-| `devsetup info <tool>`        | Show details for a specific tool         |
-| `devsetup --version`          | Print the DevSetup version               |
-| `devsetup --help`             | Show usage guide                         |
-
----
-
-## Environment Configuration Schema
-
-```json
-{
-  "schema": "1.0",
-  "id": "web",
-  "name": "Web Development",
-  "description": "Full web development stack.",
-  "installers": ["git", "node", "vscode"]
-}
-```
-
----
-
-## Plugin System
-
-Drop a Python module into `~/.devsetup/plugins/` to register custom tools.
-See `plugins/README.md` for the plugin API.
+| Command | Description |
+|---|---|
+| `devsetup list` | List all available environments |
+| `devsetup install <env>` | Install all tools for an environment |
+| `devsetup install --tool <t>` | Install a single named tool |
+| `devsetup info <tool>` | Show details for a specific tool |
+| `devsetup --version` | Print the DevSetup version |
+| `devsetup --help` | Show usage guide |
 
 ---
 
