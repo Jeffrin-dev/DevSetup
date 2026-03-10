@@ -3,7 +3,9 @@ devsetup.installers.vscode
 --------------------------
 Isolated installer module for Visual Studio Code.
 
-OS detection is delegated to devsetup.system.os_detector (Architecture Rule 5).
+Uses PackageManagerRunner for installation where available.
+On Linux with apt/dnf, VS Code is not in the standard package
+index — uses snap as the installation path instead.
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
@@ -11,8 +13,10 @@ import shutil
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
-from devsetup.system.os_detector import get_os, LINUX, MACOS, WINDOWS
-from devsetup.utils.logger import info, error
+from devsetup.system.package_managers import PackageManagerRunner
+from devsetup.system.package_manager_detector import APT, DNF
+from devsetup.utils.package_loader import load_package_name
+from devsetup.utils.logger import info
 
 
 class VSCodeInstaller(BaseInstaller):
@@ -23,27 +27,23 @@ class VSCodeInstaller(BaseInstaller):
         return shutil.which("code") is not None
 
     def install(self) -> None:
-        """Install VS Code using the OS-appropriate method."""
-        os_name = get_os()
+        """
+        Install VS Code using the active system package manager.
+        On apt and dnf systems, VS Code is not in the standard
+        package index — falls back to snap for reliable installation.
+        """
+        pm = PackageManagerRunner()
+        package = load_package_name("vscode", pm.name)
 
-        if os_name == LINUX:
+        if package is None:
+            # apt / dnf: VS Code is not in the standard repo — use snap
             info("Installing VS Code via snap...")
-            subprocess.run(["sudo", "snap", "install", "--classic", "code"], check=True)
-
-        elif os_name == MACOS:
-            info("Installing VS Code via Homebrew cask...")
-            subprocess.run(["brew", "install", "--cask", "visual-studio-code"], check=True)
-
-        elif os_name == WINDOWS:
-            info("Installing VS Code via winget...")
             subprocess.run(
-                ["winget", "install", "--id", "Microsoft.VisualStudioCode", "-e"],
+                ["sudo", "snap", "install", "--classic", "code"],
                 check=True,
             )
-
         else:
-            error(f"Unsupported OS: {os_name}. Please install VS Code manually.")
-            raise RuntimeError(f"Cannot install vscode on unsupported OS: {os_name}")
+            pm.install(package)
 
     def version(self) -> str:
         """Return the installed VS Code version string."""
