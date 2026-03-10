@@ -44,6 +44,19 @@ python -m devsetup --help
 
 ---
 
+## Supported Platforms
+
+| OS | Status |
+|---|---|
+| Linux | ✅ Supported |
+| macOS | ✅ Supported |
+| Windows | ✅ Supported |
+
+DevSetup automatically detects the operating system at runtime and runs
+the correct installation path for each tool.
+
+---
+
 ## Supported Environments
 
 ### Web
@@ -72,12 +85,6 @@ Adding a new environment requires **no code changes** — just create a JSON fil
 
 1. Create a new file in `environments/`:
 
-```bash
-environments/go.json
-```
-
-2. Define the environment:
-
 ```json
 {
   "schema": "1.0",
@@ -88,67 +95,83 @@ environments/go.json
 }
 ```
 
-3. Run it immediately:
+2. Run it immediately:
 
 ```bash
 devsetup install go
 devsetup list
 ```
 
-The environment is automatically discovered — no restarts, no code edits.
+---
+
+## Cross-Platform Architecture
+
+DevSetup uses a centralized OS detection module that provides a clean,
+normalized API to all installer modules.
+
+### OS Detection
+
+```
+devsetup install web
+        │
+        ▼
+OS Detector (system/os_detector.py)
+        │
+        ▼
+Normalized OS: linux | macos | windows
+        │
+        ▼
+Installer OS Branch
+```
+
+### Normalized OS identifiers
+
+| Raw platform value | Normalized |
+|---|---|
+| `linux` | `linux` |
+| `darwin` | `macos` |
+| `win32` / `windows` | `windows` |
+
+### Installer OS branching
+
+Each installer contains OS branches internally:
+
+```
+install()
+   │
+   ├─ linux   → apt-get
+   ├─ macos   → brew
+   └─ windows → winget
+```
+
+All OS detection is centralized in `devsetup/system/os_detector.py`.
+No installer calls `platform.system()` directly.
 
 ---
 
-## Architecture
+## Full Architecture
 
 ```
 CLI
  │
  ▼
 Environment Loader            (core/environment_loader.py)
- │  scans environments/ dynamically
+ │
  ▼
 Environment Registry          (environments/*.json)
- │  id, name, description, installers list
+ │
  ▼
 Installer IDs                 (["python", "pip", "vscode"])
  │
  ▼
 Installer Registry            (installers/manager.py)
- │  maps IDs to installer classes
+ │
+ ▼
+OS Detector                   (system/os_detector.py)
+ │
  ▼
 Installer Modules             (installers/git.py, node.py, ...)
 ```
-
-Each layer has a single responsibility:
-
-- **CLI** — parses commands, no business logic
-- **Environment Loader** — scans directory, parses JSON, validates schema
-- **Environment Registry** — JSON config files, one per environment
-- **Installer Registry** — maps tool names to installer classes
-- **Installer Modules** — isolated per tool, OS-specific logic contained inside
-
----
-
-## Environment Configuration Schema
-
-```json
-{
-  "schema": "1.0",
-  "id": "web",
-  "name": "Web Development",
-  "description": "Full web development stack.",
-  "installers": ["git", "node", "vscode"]
-}
-```
-
-| Field | Purpose |
-|---|---|
-| `schema` | Config schema version for backward compatibility |
-| `id` | Unique identifier used in CLI commands |
-| `name` | Human-readable display name |
-| `description` | Short description of the environment |
-| `installers` | Ordered list of installer IDs to execute |
 
 ---
 
@@ -157,22 +180,24 @@ Each layer has a single responsibility:
 ```
 DevSetup/
 ├── devsetup/
-│   ├── __version__.py        ← single version source of truth
-│   ├── __main__.py           ← python -m devsetup entry point
+│   ├── __version__.py
+│   ├── __main__.py
 │   ├── cli/
-│   │   └── main.py           ← argument parsing only, no business logic
+│   │   └── main.py
 │   ├── core/
-│   │   └── environment_loader.py  ← dynamic loader, validates & registers envs
+│   │   └── environment_loader.py
+│   ├── system/
+│   │   └── os_detector.py        ← centralized OS detection
 │   ├── installers/
-│   │   ├── base.py           ← standard installer interface
-│   │   ├── manager.py        ← installer registry & dispatch
+│   │   ├── base.py
+│   │   ├── manager.py
 │   │   ├── git.py
 │   │   ├── node.py
 │   │   ├── pip.py
 │   │   ├── python.py
 │   │   └── vscode.py
 │   └── utils/
-│       └── logger.py         ← all output routed through here
+│       └── logger.py
 ├── environments/
 │   ├── web.json
 │   ├── python.json
@@ -198,13 +223,17 @@ DevSetup/
 
 ---
 
-## Adding a Tool Installer
+## Environment Configuration Schema
 
-1. Create `devsetup/installers/<toolname>.py`
-2. Subclass `BaseInstaller` and implement `detect()`, `install()`, `version()`
-3. Register it in `devsetup/installers/manager.py`
-
-All OS-specific logic must stay inside the installer module.
+```json
+{
+  "schema": "1.0",
+  "id": "web",
+  "name": "Web Development",
+  "description": "Full web development stack.",
+  "installers": ["git", "node", "vscode"]
+}
+```
 
 ---
 
@@ -212,8 +241,6 @@ All OS-specific logic must stay inside the installer module.
 
 Drop a Python module into `~/.devsetup/plugins/` to register custom tools.
 See `plugins/README.md` for the plugin API.
-
-Plugin failures are sandboxed and will never crash DevSetup.
 
 ---
 
