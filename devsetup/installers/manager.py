@@ -4,7 +4,7 @@ devsetup.installers.manager
 Installer manager / registry.
 
 The CLI calls this module — it never calls individual installers directly.
-Contains no OS logic.  Contains no environment loading logic.
+Contains no OS logic. Contains no environment loading logic.
 """
 
 from typing import Dict, Type
@@ -16,16 +16,22 @@ from devsetup.installers.pip import PipInstaller
 from devsetup.installers.python import PythonInstaller
 from devsetup.installers.vscode import VSCodeInstaller
 from devsetup.system.os_detector import get_os
-from devsetup.utils.logger import info, error, success, warn, check, skip, install
+from devsetup.system.package_manager_detector import get_package_manager
+from devsetup.utils.logger import info, error, success, check, skip, install
 
 # Registry: tool name → installer class
 _REGISTRY: Dict[str, Type[BaseInstaller]] = {
-    "git": GitInstaller,
-    "node": NodeInstaller,
-    "pip": PipInstaller,
+    "git":    GitInstaller,
+    "node":   NodeInstaller,
+    "pip":    PipInstaller,
     "python": PythonInstaller,
     "vscode": VSCodeInstaller,
 }
+
+
+def is_registered(tool_name: str) -> bool:
+    """Return True if tool_name exists in the installer registry."""
+    return tool_name in _REGISTRY
 
 
 def get_installer(tool_name: str) -> BaseInstaller:
@@ -65,23 +71,22 @@ def install_environment(tools: list) -> None:
     """Install all tools defined in an environment config."""
     try:
         current_os = get_os()
+        current_pm = get_package_manager()
         info(f"Detected OS: {current_os}")
+        info(f"Detected package manager: {current_pm}")
     except RuntimeError as exc:
         error(str(exc))
         raise
 
     total = len(tools)
     for index, tool_name in enumerate(tools, start=1):
-        info(f"[{index}/{total}] Installing {tool_name} ({current_os})")
+        info(f"[{index}/{total}] Installing {tool_name} ({current_os} / {current_pm})")
         install_tool(tool_name)
     success("Environment setup complete.")
 
 
 def list_tools() -> Dict[str, str]:
-    """
-    Return a dict of tool → version for all registered tools.
-    Version is 'not installed' if the tool is absent.
-    """
+    """Return a dict of tool → version for all registered tools."""
     result = {}
     for name, cls in _REGISTRY.items():
         installer = cls()
@@ -93,7 +98,7 @@ def tool_info(tool_name: str) -> Dict[str, str]:
     """Return detection status and version for a single tool."""
     installer = get_installer(tool_name)
     return {
-        "tool": tool_name,
+        "tool":      tool_name,
         "installed": str(installer.detect()),
-        "version": installer.version(),
+        "version":   installer.version(),
     }
