@@ -14,6 +14,7 @@ devsetup list
 devsetup install web
 devsetup install python
 devsetup install --tool git
+devsetup install web --force     # force reinstall all tools
 devsetup info node
 ```
 
@@ -141,6 +142,53 @@ Add a new tool mapping by creating `packages/<toolname>.json` — no code change
 
 ---
 
+## Safe Reinstall Behavior
+
+DevSetup is idempotent by default — running it multiple times is safe.
+
+### Default (skip if installed)
+
+```
+devsetup install web
+```
+
+```
+[CHECK]   git
+[SKIP]    git already installed (git version 2.43.0)
+[CHECK]   node
+[SKIP]    node already installed (v22.14.0)
+```
+
+Tools that are already installed are skipped automatically.
+
+### Force reinstall
+
+```
+devsetup install web --force
+devsetup install --tool git --force
+```
+
+```
+[WARN]    --force enabled. All tools will be reinstalled.
+[CHECK]   git
+[WARN]    --force enabled. Reinstalling git.
+[INSTALL] git
+```
+
+The `--force` flag bypasses the skip check and reinstalls regardless of current state.
+This is useful for:
+- CI environments that need clean installs
+- Recovering from corrupted tool installations
+- Upgrading to latest versions
+
+### Detection strategy
+
+Detection uses `command_runs()` — verifies both presence on PATH and successful
+execution (exit code 0). This catches corrupted installs where the binary exists
+but is non-functional.
+
+---
+
 ## Full Architecture
 
 ```
@@ -189,6 +237,7 @@ DevSetup/
 │   │   └── environment_loader.py
 │   ├── system/
 │   │   ├── os_detector.py
+│   ├── command_detector.py        ← command presence + execution check
 │   │   ├── package_manager_detector.py
 │   │   └── package_managers/
 │   │       ├── runner.py
