@@ -3,18 +3,16 @@ devsetup.installers.vscode
 --------------------------
 Isolated installer module for Visual Studio Code.
 
-Uses PackageManagerRunner for installation where available.
-On Linux with apt/dnf, VS Code is not in the standard package
-index — uses snap as the installation path instead.
+Uses PackageManagerRunner where available, snap on apt/dnf.
+Uses command_detector for reliable tool detection (Phase 9).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
-import shutil
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
+from devsetup.system.command_detector import command_runs
 from devsetup.system.package_managers import PackageManagerRunner
-from devsetup.system.package_manager_detector import APT, DNF
 from devsetup.utils.package_loader import load_package_name
 from devsetup.utils.logger import info
 
@@ -23,20 +21,18 @@ class VSCodeInstaller(BaseInstaller):
     tool_name = "vscode"
 
     def detect(self) -> bool:
-        """Return True if the 'code' CLI is available on PATH."""
-        return shutil.which("code") is not None
+        """Return True if the 'code' CLI is on PATH and executes successfully."""
+        return command_runs("code")
 
     def install(self) -> None:
         """
         Install VS Code using the active system package manager.
-        On apt and dnf systems, VS Code is not in the standard
-        package index — falls back to snap for reliable installation.
+        On apt/dnf systems, VS Code is not in the standard repo — uses snap.
         """
         pm = PackageManagerRunner()
         package = load_package_name("vscode", pm.name)
 
         if package is None:
-            # apt / dnf: VS Code is not in the standard repo — use snap
             info("Installing VS Code via snap...")
             subprocess.run(
                 ["sudo", "snap", "install", "--classic", "code"],
