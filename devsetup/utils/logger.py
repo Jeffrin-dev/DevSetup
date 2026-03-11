@@ -1,43 +1,79 @@
 """
 devsetup.utils.logger
 ---------------------
-Centralised logging utility.  All CLI output must be routed through
+Centralised logging utility. All CLI output must be routed through
 these helpers instead of raw print() calls.
+
+Log levels supported:
+  [INFO]    — general information
+  [WARN]    — non-fatal warning
+  [ERROR]   — error, written to stderr
+  [DEBUG]   — verbose diagnostics (enabled via DEVSETUP_DEBUG=1)
+  [CHECK]   — tool detection in progress
+  [SKIP]    — tool already installed, skipping
+  [INSTALL] — tool installation starting
+  [OK]      — success confirmation
+  [FAIL]    — installation failure
+
+All messages include a timestamp for debugging.
 """
 
+import os
 import sys
+from datetime import datetime
+
+
+def _timestamp() -> str:
+    """Return current time formatted as HH:MM:SS."""
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def _is_debug() -> bool:
+    """Return True if debug output is enabled via environment variable."""
+    return os.environ.get("DEVSETUP_DEBUG", "").strip() == "1"
 
 
 def info(message: str) -> None:
     """Print an informational message to stdout."""
-    print(f"[INFO]    {message}")
+    print(f"[{_timestamp()}] [INFO]    {message}")
 
 
 def error(message: str) -> None:
     """Print an error message to stderr."""
-    print(f"[ERROR]   {message}", file=sys.stderr)
+    print(f"[{_timestamp()}] [ERROR]   {message}", file=sys.stderr)
 
 
 def success(message: str) -> None:
     """Print a success message to stdout."""
-    print(f"[OK]      {message}")
+    print(f"[{_timestamp()}] [OK]      {message}")
 
 
 def warn(message: str) -> None:
     """Print a warning message to stdout."""
-    print(f"[WARN]    {message}")
+    print(f"[{_timestamp()}] [WARN]    {message}")
 
 
 def check(message: str) -> None:
     """Print a check/detection message to stdout."""
-    print(f"[CHECK]   {message}")
+    print(f"[{_timestamp()}] [CHECK]   {message}")
 
 
 def skip(message: str) -> None:
     """Print a skip message when tool is already installed."""
-    print(f"[SKIP]    {message}")
+    print(f"[{_timestamp()}] [SKIP]    {message}")
 
 
 def install(message: str) -> None:
     """Print an install action message to stdout."""
-    print(f"[INSTALL] {message}")
+    print(f"[{_timestamp()}] [INSTALL] {message}")
+
+
+def fail(message: str) -> None:
+    """Print a failure message to stderr."""
+    print(f"[{_timestamp()}] [FAIL]    {message}", file=sys.stderr)
+
+
+def debug(message: str) -> None:
+    """Print a debug message to stdout (only when DEVSETUP_DEBUG=1)."""
+    if _is_debug():
+        print(f"[{_timestamp()}] [DEBUG]   {message}")
