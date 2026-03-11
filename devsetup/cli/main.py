@@ -28,19 +28,24 @@ def build_parser() -> argparse.ArgumentParser:
     """Construct and return the CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="devsetup",
-        description=(
-            "DevSetup — automated developer environment setup tool.\n"
-            "Installs and configures tools for any development environment."
-        ),
+        description="DevSetup — automated developer environment setup tool.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
+            "Commands:\n"
+            "  install <environment>    Install a development environment\n"
+            "  install --tool <name>    Install a single tool\n"
+            "  list                     List available environments\n"
+            "  info <tool>              Show details for a specific tool\n\n"
+            "Options:\n"
+            "  --force                  Reinstall tools even if already installed\n"
+            "  --version                Show CLI version\n"
+            "  --help                   Show this help message\n\n"
             "Examples:\n"
             "  devsetup install web\n"
             "  devsetup install web --force\n"
-            "  devsetup install python\n"
             "  devsetup install --tool git\n"
             "  devsetup list\n"
-            "  devsetup info git\n"
+            "  devsetup info node\n"
         ),
     )
 
@@ -97,9 +102,12 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     if args.tool:
         try:
-            installer_manager.install_tool(args.tool, force=force)
+            result = installer_manager.install_tool(args.tool, force=force)
+            if result == "failed":
+                return 1
         except KeyError as exc:
             error(str(exc))
+            error("Use 'devsetup list' to see available environments.")
             return 1
         except Exception as exc:
             error(f"Installation failed: {exc}")
@@ -109,13 +117,19 @@ def cmd_install(args: argparse.Namespace) -> int:
         env_id = args.environment
         try:
             env = environment_loader.load(env_id)
-        except (FileNotFoundError, ValueError) as exc:
+        except FileNotFoundError as exc:
+            error(str(exc))
+            return 1
+        except ValueError as exc:
             error(str(exc))
             return 1
 
         info(f"Installing environment: {env['name']}")
         try:
             installer_manager.install_environment(env["installers"], force=force)
+        except RuntimeError as exc:
+            error(str(exc))
+            return 1
         except Exception as exc:
             error(f"Environment installation failed: {exc}")
             return 1
@@ -147,6 +161,7 @@ def cmd_info(args: argparse.Namespace) -> int:
         data = installer_manager.tool_info(args.tool)
     except KeyError as exc:
         error(str(exc))
+        error("Use 'devsetup list' to see available environments.")
         return 1
 
     info(f"Tool      : {data['tool']}")
@@ -157,8 +172,8 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 _COMMAND_HANDLERS = {
     "install": cmd_install,
-    "list": cmd_list,
-    "info": cmd_info,
+    "list":    cmd_list,
+    "info":    cmd_info,
 }
 
 
@@ -181,6 +196,7 @@ def main(argv=None) -> int:
     handler = _COMMAND_HANDLERS.get(args.command)
     if handler is None:
         error(f"Unknown command: {args.command}")
+        error("Run 'devsetup --help' for usage.")
         parser.print_help()
         return 1
 
