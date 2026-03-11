@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  devsetup install web\n"
+            "  devsetup install web --force\n"
             "  devsetup install python\n"
             "  devsetup install --tool git\n"
             "  devsetup list\n"
@@ -67,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="TOOL",
         help="Install a single tool by name (e.g. git).",
     )
+    install_parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Force reinstall even if the tool is already installed.",
+    )
 
     # ── devsetup list ─────────────────────────────────────────────────────────
     subparsers.add_parser(
@@ -86,10 +93,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_install(args: argparse.Namespace) -> int:
     """Handle: devsetup install"""
+    force = getattr(args, "force", False)
+
     if args.tool:
-        # Single-tool install
         try:
-            installer_manager.install_tool(args.tool)
+            installer_manager.install_tool(args.tool, force=force)
         except KeyError as exc:
             error(str(exc))
             return 1
@@ -98,7 +106,6 @@ def cmd_install(args: argparse.Namespace) -> int:
             return 1
 
     else:
-        # Environment install
         env_id = args.environment
         try:
             env = environment_loader.load(env_id)
@@ -108,7 +115,7 @@ def cmd_install(args: argparse.Namespace) -> int:
 
         info(f"Installing environment: {env['name']}")
         try:
-            installer_manager.install_environment(env["installers"])
+            installer_manager.install_environment(env["installers"], force=force)
         except Exception as exc:
             error(f"Environment installation failed: {exc}")
             return 1
