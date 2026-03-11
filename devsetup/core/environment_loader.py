@@ -1,20 +1,25 @@
 """
 devsetup.core.environment_loader
 ---------------------------------
-Responsible for loading, validating, and returning environment
-objects from JSON configuration files.
+Responsible for loading and returning environment objects from
+JSON configuration files.
 
-No OS-specific logic.  No business/install logic.
+Responsibilities: read configs, parse JSON, return environment objects.
+Validation is delegated to devsetup.system.environment_validator.
+
+No OS-specific logic. No business/install logic.
 """
 
 import json
 import os
 from typing import Dict, Any, List
 
-from devsetup.utils.logger import error
-
-REQUIRED_FIELDS = {"schema", "id", "name", "installers"}
-SUPPORTED_SCHEMAS = {"1.0"}
+from devsetup.utils.logger import error, debug
+from devsetup.system.environment_validator import (
+    validate,
+    validate_no_duplicates,
+    EnvironmentValidationError,
+)
 
 
 def _config_dir() -> str:
@@ -41,34 +46,35 @@ def load(env_id: str) -> Dict[str, Any]:
     ------
     FileNotFoundError
         If the configuration file does not exist.
-    ValueError
-        If the configuration fails schema validation.
+    EnvironmentValidationError
+        If the configuration fails validation.
     """
     config_path = os.path.join(_config_dir(), f"{env_id}.json")
 
     if not os.path.isfile(config_path):
         raise FileNotFoundError(
             f"Environment '{env_id}' not found. "
-            f"Expected config at: {config_path}"
+            f"Use 'devsetup list' to see available environments."
         )
 
     with open(config_path, "r", encoding="utf-8") as fh:
         try:
             data = json.load(fh)
         except json.JSONDecodeError as exc:
-            raise ValueError(
+            raise EnvironmentValidationError(
                 f"Failed to parse environments/{env_id}.json: {exc}"
             ) from exc
 
-    _validate(data, env_id)
+    debug(f"Loaded environment config: {env_id}.json")
+    validate(data, f"{env_id}.json")
     return data
 
 
 def list_available() -> List[str]:
     """
-    Return a sorted list of all available environment IDs.
-    Scans the environments directory dynamically —
-    no code changes required when new files are added.
+    Return a sorted list of all valid environment IDs.
+    Scans the environments directory dynamically at runtime.
+    Invalid or duplicate configs are skipped with a warning.
     """
     config_dir = _config_dir()
 
@@ -76,7 +82,7 @@ def list_available() -> List[str]:
         return []
 
     env_ids = []
-    seen_ids = set()
+    seen_ids: set = set()
 
     for filename in sorted(os.listdir(config_dir)):
         if not filename.endswith(".json"):
@@ -92,53 +98,15 @@ def list_available() -> List[str]:
 
         env_id = data.get("id", os.path.splitext(filename)[0])
 
-        # Duplicate ID protection
-        if env_id in seen_ids:
-            error(
-                f"Duplicate environment ID '{env_id}' in {filename} — skipping."
-            )
+        try:
+            validate_no_duplicates(env_id, seen_ids, filename)
+            validate(data, filename)
+        except EnvironmentValidationError as exc:
+            error(f"{exc} — skipping.")
             continue
 
         seen_ids.add(env_id)
         env_ids.append(env_id)
+        debug(f"Registered environment: {env_id}")
 
     return env_ids
-
-
-def _validate(data: Dict[str, Any], source: str) -> None:
-    """
-    Raise ValueError if required fields are missing,
-    schema is unsupported, or installer list is invalid.
-    """
-    missing = REQUIRED_FIELDS - data.keys()
-    if missing:
-        raise ValueError(
-            f"Invalid environment configuration: {source}.json — "
-            f"missing required fields: {missing}"
-        )
-
-    if data["schema"] not in SUPPORTED_SCHEMAS:
-        raise ValueError(
-            f"Unsupported schema version '{data['schema']}' in {source}.json. "
-            f"Supported: {SUPPORTED_SCHEMAS}"
-        )
-
-    if not isinstance(data["installers"], list):
-        raise ValueError(
-            f"'installers' in {source}.json must be a list, "
-            f"got {type(data['installers']).__name__}."
-        )
-
-    if len(data["installers"]) == 0:
-        raise ValueError(
-            f"'installers' in {source}.json must not be empty."
-        )
-
-    # Validate all installer IDs exist in the installer registry
-    from devsetup.installers.manager import is_registered
-    for installer_id in data["installers"]:
-        if not is_registered(installer_id):
-            raise ValueError(
-                f"Installer '{installer_id}' not found in registry. "
-                f"Referenced in {source}.json."
-            )
