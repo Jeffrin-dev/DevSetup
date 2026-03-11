@@ -138,19 +138,25 @@ def _print_summary(
     skipped: List[str],
     failed: str | None,
 ) -> None:
-    """Print the installation summary (Phase 10)."""
+    """Print the installation summary. All three sections always appear."""
     info("")
     info("Installation Summary")
     info("--------------------")
 
+    info("Installed:")
     if installed:
-        info("Installed:")
         for t in installed:
             info(f"  {t}")
+    else:
+        info("  None")
+
+    info("Skipped:")
     if skipped:
-        info("Skipped:")
         for t in skipped:
             info(f"  {t}")
+    else:
+        info("  None")
+
     info(f"Failed:    {'None' if failed is None else failed}")
     info("")
 
