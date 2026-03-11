@@ -17,7 +17,7 @@ from devsetup.installers.python import PythonInstaller
 from devsetup.installers.vscode import VSCodeInstaller
 from devsetup.system.os_detector import get_os
 from devsetup.system.package_manager_detector import get_package_manager
-from devsetup.utils.logger import info, error, success, check, skip, install
+from devsetup.utils.logger import info, error, success, warn, check, skip, install
 
 # Registry: tool name → installer class
 _REGISTRY: Dict[str, Type[BaseInstaller]] = {
@@ -51,24 +51,45 @@ def get_installer(tool_name: str) -> BaseInstaller:
     return _REGISTRY[tool_name]()
 
 
-def install_tool(tool_name: str) -> None:
-    """Detect and, if necessary, install a single tool."""
+def install_tool(tool_name: str, force: bool = False) -> None:
+    """
+    Detect and, if necessary, install a single tool.
+
+    Parameters
+    ----------
+    tool_name : str
+        The registered tool name.
+    force : bool
+        If True, reinstall even if the tool is already present.
+    """
     installer = get_installer(tool_name)
 
     check(tool_name)
 
-    if installer.detect():
+    if not force and installer.detect():
         ver = installer.version()
         skip(f"{tool_name} already installed ({ver})")
         return
+
+    if force and installer.detect():
+        warn(f"--force enabled. Reinstalling {tool_name}.")
 
     install(tool_name)
     installer.install()
     success(f"{tool_name} installed successfully.")
 
 
-def install_environment(tools: list) -> None:
-    """Install all tools defined in an environment config."""
+def install_environment(tools: list, force: bool = False) -> None:
+    """
+    Install all tools defined in an environment config.
+
+    Parameters
+    ----------
+    tools : list
+        Ordered list of tool names to install.
+    force : bool
+        If True, reinstall all tools even if already present.
+    """
     try:
         current_os = get_os()
         current_pm = get_package_manager()
@@ -78,10 +99,13 @@ def install_environment(tools: list) -> None:
         error(str(exc))
         raise
 
+    if force:
+        warn("--force enabled. All tools will be reinstalled.")
+
     total = len(tools)
     for index, tool_name in enumerate(tools, start=1):
         info(f"[{index}/{total}] Installing {tool_name} ({current_os} / {current_pm})")
-        install_tool(tool_name)
+        install_tool(tool_name, force=force)
     success("Environment setup complete.")
 
 
