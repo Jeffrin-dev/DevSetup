@@ -10,6 +10,9 @@ Replaces loose string return values with a typed object that carries:
   - message         : human-readable description
   - error_category  : optional error classification (None on success/skip)
 
+Also provides InstallSummary — the accumulator that collects every
+installer result during install_environment() and builds the final report.
+
 Exit Code Contract
 ------------------
   0  → success
@@ -29,9 +32,9 @@ Error Categories
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 
 # ── Status ────────────────────────────────────────────────────────────────────
@@ -51,10 +54,10 @@ class ExitCode:
     All installer results and CLI exit codes use these values.
     Unknown codes are treated as fatal errors by the engine.
     """
-    SUCCESS              = 0
-    INSTALLATION_FAILURE = 1
-    DETECTION_ERROR      = 2
-    UNSUPPORTED_OS       = 3
+    SUCCESS                 = 0
+    INSTALLATION_FAILURE    = 1
+    DETECTION_ERROR         = 2
+    UNSUPPORTED_OS          = 3
     PACKAGE_MANAGER_FAILURE = 4
 
 
@@ -148,3 +151,71 @@ class InstallerResult:
     def failed(self) -> bool:
         """True only for FAIL."""
         return self.status == InstallerStatus.FAIL
+
+
+# ── Install Summary ───────────────────────────────────────────────────────────
+
+@dataclass
+class InstallSummary:
+    """
+    Accumulates installer results as the engine runs and produces the
+    final installation report.
+
+    Collected by the engine during install_environment(); printed after
+    all installers have run (or the pipeline has stopped on a FAIL).
+
+    Attributes
+    ----------
+    env_name : str | None
+        Human-readable environment name (e.g. "Web"), or None for
+        single-tool installs.
+    installed : list[str]
+        Installer IDs that completed with SUCCESS, in execution order.
+    skipped : list[str]
+        Installer IDs that were SKIP-ped, in execution order.
+    failed_result : InstallerResult | None
+        The single FAIL result that stopped the pipeline, or None.
+    """
+    env_name:      Optional[str]            = None
+    installed:     List[str]                = field(default_factory=list)
+    skipped:       List[str]                = field(default_factory=list)
+    failed_result: Optional[InstallerResult] = field(default=None)
+
+    def record(self, result: InstallerResult) -> None:
+        """
+        Classify a result and append it to the correct bucket.
+
+        Each installer ID is recorded exactly once.  Duplicate calls for
+        the same tool ID are silently ignored (Phase 6 guard).
+
+        Parameters
+        ----------
+        result : InstallerResult
+        """
+        tool = result.installer_id
+
+        # Phase 6: guard against duplicate entries
+        already_seen = (
+            set(self.installed)
+            | set(self.skipped)
+            | ({self.failed_result.installer_id} if self.failed_result else set())
+        )
+        if tool in already_seen:
+            return
+
+        if result.status == InstallerStatus.SUCCESS:
+            self.installed.append(tool)
+        elif result.status == InstallerStatus.SKIP:
+            self.skipped.append(tool)
+        elif result.status == InstallerStatus.FAIL:
+            self.failed_result = result
+
+    @property
+    def has_failure(self) -> bool:
+        """True when at least one installer failed."""
+        return self.failed_result is not None
+
+    @property
+    def total_run(self) -> int:
+        """Total number of installers that produced a result."""
+        return len(self.installed) + len(self.skipped) + (1 if self.failed_result else 0)
