@@ -139,7 +139,9 @@ def cmd_install(args: argparse.Namespace) -> int:
 
         info(f"Installing environment: {env['name']}")
         try:
-            installer_manager.install_environment(env["installers"], force=force)
+            installer_manager.install_environment(
+                env["installers"], force=force, env_name=env["name"]
+            )
         except RuntimeError as exc:
             error(str(exc))
             return 1
