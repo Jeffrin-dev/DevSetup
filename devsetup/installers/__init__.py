@@ -1,5 +1,5 @@
 from devsetup.installers.base import BaseInstaller
-from devsetup.installers.result import InstallerResult, InstallerStatus, ExitCode, ErrorCategory
+from devsetup.installers.result import InstallerResult, InstallerStatus, InstallSummary, ExitCode, ErrorCategory
 from devsetup.installers.manager import (
     get_installer,
     install_tool,
@@ -13,6 +13,7 @@ __all__ = [
     "BaseInstaller",
     "InstallerResult",
     "InstallerStatus",
+    "InstallSummary",
     "ExitCode",
     "ErrorCategory",
     "get_installer",
