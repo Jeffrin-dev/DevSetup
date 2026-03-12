@@ -52,7 +52,7 @@ class TestCLIInstall(unittest.TestCase):
                 "id": "web", "name": "Web", "installers": ["git"]
             }
             main(["install", "web", "--force"])
-            mock_env.assert_called_once_with(["git"], force=True)
+            mock_env.assert_called_once_with(["git"], force=True, env_name="Web")
 
     def test_install_without_force_defaults_false(self):
         with patch("devsetup.installers.manager.install_environment") as mock_env, \
@@ -62,7 +62,7 @@ class TestCLIInstall(unittest.TestCase):
                 "id": "web", "name": "Web", "installers": ["git"]
             }
             main(["install", "web"])
-            mock_env.assert_called_once_with(["git"], force=False)
+            mock_env.assert_called_once_with(["git"], force=False, env_name="Web")
 
 
 class TestCLIInfo(unittest.TestCase):
