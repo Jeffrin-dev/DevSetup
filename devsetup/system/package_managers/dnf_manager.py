@@ -47,3 +47,8 @@ class DnfManager(BasePackageManager):
                 f"Permission denied running: {' '.join(cmd)}",
                 pm_exit_code=-1,
             )
+        except subprocess.CalledProcessError as exc:
+            raise PackageManagerError(
+                f"dnf command failed: {' '.join(cmd)}",
+                pm_exit_code=exc.returncode,
+            )
