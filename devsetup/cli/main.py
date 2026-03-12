@@ -16,12 +16,14 @@ Must NOT contain:
 """
 
 import argparse
+import os
 import sys
 
 from devsetup.__version__ import __version__
 from devsetup.utils.logger import info, error
 from devsetup.installers import manager as installer_manager
 from devsetup.core import environment_loader
+from devsetup.core.plugin_loader import load_plugins
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,16 +35,18 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Commands:\n"
             "  install <environment>    Install a development environment\n"
-            "  install --tool <name>    Install a single tool\n"
+            "  install --tool <n>       Install a single tool\n"
             "  list                     List available environments\n"
             "  info <tool>              Show details for a specific tool\n\n"
             "Options:\n"
             "  --force                  Reinstall tools even if already installed\n"
+            "  --debug                  Enable verbose diagnostic output\n"
             "  --version                Show CLI version\n"
             "  --help                   Show this help message\n\n"
             "Examples:\n"
             "  devsetup install web\n"
             "  devsetup install web --force\n"
+            "  devsetup install web --debug\n"
             "  devsetup install --tool git\n"
             "  devsetup list\n"
             "  devsetup info node\n"
@@ -79,6 +83,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Force reinstall even if the tool is already installed.",
     )
+    install_parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Enable verbose diagnostic output (sets DEVSETUP_DEBUG=1).",
+    )
 
     # ── devsetup list ─────────────────────────────────────────────────────────
     subparsers.add_parser(
@@ -98,13 +108,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_install(args: argparse.Namespace) -> int:
     """Handle: devsetup install"""
+    # Activate debug mode if --debug flag is set
+    if getattr(args, "debug", False):
+        os.environ["DEVSETUP_DEBUG"] = "1"
+
     force = getattr(args, "force", False)
 
     if args.tool:
         try:
             result = installer_manager.install_tool(args.tool, force=force)
-            if result == "failed":
-                return 1
+            return 1 if result.failed else 0
         except KeyError as exc:
             error(str(exc))
             error("Use 'devsetup list' to see available environments.")
@@ -186,6 +199,9 @@ def main(argv=None) -> int:
     int
         Exit code (0 = success, non-zero = failure).
     """
+    # Load user plugins before any command runs (Architecture Rule 7)
+    load_plugins(installer_manager._REGISTRY)
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
