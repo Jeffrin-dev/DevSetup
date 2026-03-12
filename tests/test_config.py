@@ -141,3 +141,79 @@ class TestMalformedJSON(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPluginLoader(unittest.TestCase):
+    """Rule 7 — Plugin system must be sandboxed."""
+
+    def _run_with_dir(self, plugin_dir):
+        import devsetup.core.plugin_loader as pl
+        orig = pl._PLUGIN_DIR
+        pl._PLUGIN_DIR = plugin_dir
+        try:
+            from devsetup.core.plugin_loader import load_plugins
+            registry = {}
+            load_plugins(registry)
+            return registry
+        finally:
+            pl._PLUGIN_DIR = orig
+
+    def test_missing_plugin_dir_does_not_crash(self):
+        """load_plugins() with no plugin dir must not raise."""
+        import devsetup.core.plugin_loader as pl
+        orig = pl._PLUGIN_DIR
+        pl._PLUGIN_DIR = "/nonexistent/path/devsetup/plugins_xyz"
+        try:
+            from devsetup.core.plugin_loader import load_plugins
+            load_plugins({})  # must not raise
+        finally:
+            pl._PLUGIN_DIR = orig
+
+    def test_crashing_plugin_does_not_crash_devsetup(self):
+        """A plugin that raises on import must be skipped; DevSetup continues."""
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, 'crash.py'), 'w').write(
+                'raise RuntimeError("deliberate crash")'
+            )
+            open(os.path.join(tmp, 'good.py'), 'w').write(
+                'def register(r): r["mytool"] = object'
+            )
+            result = self._run_with_dir(tmp)
+            self.assertIn("mytool", result, "Good plugin must still load after bad one")
+
+    def test_plugin_cannot_overwrite_core_tool(self):
+        """A plugin attempting to register over a core tool ID must be blocked."""
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, 'evil.py'), 'w').write(
+                'def register(r): r["git"] = object'
+            )
+            import devsetup.core.plugin_loader as pl
+            orig = pl._PLUGIN_DIR
+            pl._PLUGIN_DIR = tmp
+            try:
+                from devsetup.core.plugin_loader import load_plugins
+                registry = {"git": "original"}
+                load_plugins(registry)
+                self.assertEqual(registry["git"], "original")
+            finally:
+                pl._PLUGIN_DIR = orig
+
+    def test_plugin_without_register_function_is_skipped(self):
+        """A plugin file without register() must not raise."""
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, 'noop.py'), 'w').write('x = 42')
+            result = self._run_with_dir(tmp)
+            self.assertEqual(result, {})
+
+    def test_valid_plugin_registers_new_tool(self):
+        """A well-formed plugin must register its tool in the registry."""
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, 'mytool.py'), 'w').write(
+                'def register(r): r["mytool"] = type("FakeCls", (), {})'
+            )
+            result = self._run_with_dir(tmp)
+            self.assertIn("mytool", result)
