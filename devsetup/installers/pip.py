@@ -8,6 +8,7 @@ Patch (v1.3.2 — Issue 2): version() uses command_exists() not detect().
 
 import subprocess
 import sys
+from typing import List
 
 from devsetup.installers.base import BaseInstaller
 from devsetup.system.command_detector import command_exists, command_runs
@@ -18,6 +19,7 @@ from devsetup.utils.logger import info
 
 
 class PipInstaller(BaseInstaller):
+    dependencies: List[str] = ["python"]  # pip is a Python package manager, python required
     tool_name = "pip"
 
     def detect(self) -> bool:
