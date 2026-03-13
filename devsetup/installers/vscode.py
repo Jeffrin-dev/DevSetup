@@ -3,16 +3,13 @@ devsetup.installers.vscode
 --------------------------
 Isolated installer module for Visual Studio Code.
 
-Uses PackageManagerRunner where available, snap on apt/dnf.
-Uses command_detector for reliable tool detection (Phase 9).
-Uses parse_version for clean version extraction (v1.3, Phase 3).
-Implements the standard BaseInstaller interface (Architecture Rule 4).
+Patch (v1.3.2 — Issue 2): version() uses command_exists() not detect().
 """
 
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
-from devsetup.system.command_detector import command_runs
+from devsetup.system.command_detector import command_exists, command_runs
 from devsetup.system.package_managers import PackageManagerRunner
 from devsetup.utils.package_loader import load_package_name
 from devsetup.utils.version_parser import parse_version
@@ -33,7 +30,6 @@ class VSCodeInstaller(BaseInstaller):
         """
         pm = PackageManagerRunner()
         package = load_package_name("vscode", pm.name)
-
         if package is None:
             info("Installing VS Code via snap...")
             subprocess.run(
@@ -47,12 +43,12 @@ class VSCodeInstaller(BaseInstaller):
         """
         Return the installed VS Code version string.
 
-        Runs 'code --version' with a 5-second timeout (v1.3, Phase 14).
-        'code --version' emits multiple lines; parse_version reads only
-        the first line and extracts the version number (e.g. '1.86.0').
-        Returns 'not installed' if VS Code is not detected.
+        Uses command_exists() (shutil.which only) rather than detect()
+        to avoid running 'code --version' twice (Issue 2 fix).
+        parse_version() reads only the first line of multi-line output.
+        Returns 'not installed' if code binary is not on PATH.
         """
-        if not self.detect():
+        if not command_exists("code"):
             return "not installed"
         result = subprocess.run(
             ["code", "--version"],
