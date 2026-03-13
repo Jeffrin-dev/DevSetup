@@ -13,6 +13,11 @@ Must NOT contain:
   - OS detection
   - Environment loading
   - Business logic of any kind
+
+v1.4.1 fix:
+  - cmd_install now catches DependencyError explicitly before the broad
+    except Exception handler, so cycle and config errors produce a clean
+    [ERROR] message instead of the generic "Environment installation failed:" prefix.
 """
 
 import argparse
@@ -24,6 +29,7 @@ from devsetup.utils.logger import info, error
 from devsetup.installers import manager as installer_manager
 from devsetup.core import environment_loader
 from devsetup.core.plugin_loader import load_plugins
+from devsetup.installers.dependency_resolver import DependencyError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -142,6 +148,13 @@ def cmd_install(args: argparse.Namespace) -> int:
             installer_manager.install_environment(
                 env["installers"], force=force, env_name=env["name"]
             )
+        except DependencyError as exc:
+            # Dependency cycle or missing reference — report cleanly then stop.
+            # DependencyError is a ValueError so without this explicit catch it
+            # would fall through to the broad except Exception handler and lose
+            # the structured message.
+            error(str(exc))
+            return 1
         except RuntimeError as exc:
             error(str(exc))
             return 1
@@ -179,9 +192,10 @@ def cmd_info(args: argparse.Namespace) -> int:
         error("Use 'devsetup list' to see available environments.")
         return 1
 
-    info(f"Tool      : {data['tool']}")
-    info(f"Installed : {data['installed']}")
-    info(f"Version   : {data['version']}")
+    info(f"Tool         : {data['tool']}")
+    info(f"Installed    : {data['installed']}")
+    info(f"Version      : {data['version']}")
+    info(f"Dependencies : {data['dependencies']}")
     return 0
 
 
