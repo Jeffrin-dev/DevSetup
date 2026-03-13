@@ -5,6 +5,7 @@ Isolated installer module for Visual Studio Code.
 
 Uses PackageManagerRunner where available, snap on apt/dnf.
 Uses command_detector for reliable tool detection (Phase 9).
+Uses parse_version for clean version extraction (v1.3, Phase 3).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
@@ -14,6 +15,7 @@ from devsetup.installers.base import BaseInstaller
 from devsetup.system.command_detector import command_runs
 from devsetup.system.package_managers import PackageManagerRunner
 from devsetup.utils.package_loader import load_package_name
+from devsetup.utils.version_parser import parse_version
 from devsetup.utils.logger import info
 
 
@@ -42,10 +44,18 @@ class VSCodeInstaller(BaseInstaller):
             pm.install(package)
 
     def version(self) -> str:
-        """Return the installed VS Code version string."""
+        """
+        Return the installed VS Code version string.
+
+        Runs 'code --version' with a 5-second timeout (v1.3, Phase 14).
+        'code --version' emits multiple lines; parse_version reads only
+        the first line and extracts the version number (e.g. '1.86.0').
+        Returns 'not installed' if VS Code is not detected.
+        """
         if not self.detect():
             return "not installed"
         result = subprocess.run(
-            ["code", "--version"], capture_output=True, text=True, check=True
+            ["code", "--version"],
+            capture_output=True, text=True, check=True, timeout=5,
         )
-        return result.stdout.splitlines()[0].strip()
+        return parse_version(result.stdout)
