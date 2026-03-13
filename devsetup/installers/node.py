@@ -7,6 +7,7 @@ Patch (v1.3.2 — Issue 2): version() uses command_exists() not detect().
 """
 
 import subprocess
+from typing import List
 
 from devsetup.installers.base import BaseInstaller
 from devsetup.system.command_detector import command_exists, command_runs
@@ -16,6 +17,7 @@ from devsetup.utils.version_parser import parse_version
 
 
 class NodeInstaller(BaseInstaller):
+    dependencies: List[str] = ["git"]  # git is a common prerequisite for Node.js workflows (cloning, npm scripts)
     tool_name = "node"
 
     def detect(self) -> bool:
