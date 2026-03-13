@@ -15,6 +15,8 @@ Log levels supported:
   [OK]      — success confirmation
   [FAIL]    — installation failure
   [VERSION] — confirmed installed version (v1.3)
+  [BLOCKED] — tool skipped because a dependency failed (v1.4, stderr)
+  [DEPS]    — dependency resolution progress messages (v1.4, stdout)
 
 All messages include a timestamp for debugging.
 """
