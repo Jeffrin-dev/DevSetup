@@ -3,17 +3,14 @@ devsetup.installers.python
 --------------------------
 Isolated installer module for Python 3.
 
-Uses PackageManagerRunner for installation (Architecture Rule 5).
-Uses command_detector for reliable tool detection (Phase 9).
-Uses parse_version for clean version extraction (v1.3, Phase 3).
-Implements the standard BaseInstaller interface (Architecture Rule 4).
+Patch (v1.3.2 — Issue 2): version() uses command_exists() not detect().
 """
 
 import subprocess
 import sys
 
 from devsetup.installers.base import BaseInstaller
-from devsetup.system.command_detector import command_runs
+from devsetup.system.command_detector import command_exists, command_runs
 from devsetup.system.package_managers import PackageManagerRunner
 from devsetup.utils.package_loader import load_package_name
 from devsetup.utils.version_parser import parse_version
@@ -36,11 +33,14 @@ class PythonInstaller(BaseInstaller):
         """
         Return the installed Python version string.
 
-        Runs 'python --version' with a 5-second timeout (v1.3, Phase 14).
-        Parses 'Python 3.11.7' → '3.11.7' via parse_version (v1.3, Phase 9).
-        Returns 'not installed' if Python is not detected.
+        Uses command_exists() (shutil.which only) rather than detect()
+        to avoid running the version command twice (Issue 2 fix).
+        Parses 'Python 3.11.7' → '3.11.7' via parse_version.
+        Returns 'not installed' if neither python3 nor python is on PATH.
         """
-        if not self.detect():
+        cmd = "python3" if command_exists("python3") else (
+              "python"  if command_exists("python")  else None)
+        if cmd is None:
             return "not installed"
         result = subprocess.run(
             [sys.executable, "--version"],
