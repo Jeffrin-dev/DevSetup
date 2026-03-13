@@ -8,7 +8,6 @@ Contains no OS logic. Contains no environment loading logic.
 
 v1.3 additions (Tool Version Verification):
   - _get_version()     : safely retrieves version from installer (Phase 13)
-  - _verify_version()  : post-install version check, FAIL on missing (Phase 10)
   - Version logged via [VERSION] after every install or skip (Phase 5)
   - InstallerResult carries .version field (Phase 6)
   - Summary displays version next to each tool name (Phase 7)
@@ -16,12 +15,22 @@ v1.3 additions (Tool Version Verification):
 
 Patch (v1.3.1):
   - Replaced fragile RuntimeError string matching with a precise
-    UnsupportedOSError catch. Previously, 'unsupported os' and
-    'cannot install' were matched against the lowercased exception
-    message — neither string matched the actual message raised by
-    os_detector.get_os(), so OS errors were always misclassified
-    as INSTALLER_FAILURE. Now UnsupportedOSError is caught as its
-    own except clause before the generic RuntimeError handler.
+    UnsupportedOSError catch.
+
+Patch (v1.3.2):
+  Issue 1 — Removed _verify_version(), which was a no-op wrapper that
+            delegated entirely to _get_version(). Call sites now call
+            _get_version() directly with a comment identifying intent.
+  Issue 3 — list_tools() and tool_info() now use _get_version() instead
+            of calling installer.version() directly, preventing unhandled
+            exceptions (TimeoutExpired, CalledProcessError, etc.) from
+            crashing devsetup info or devsetup list.
+  Issue 6 — Replaced the sentinel string blacklist in _get_version()
+            ("not installed", "unknown", "") with a regex digit check.
+            Any string that does not contain at least one digit is treated
+            as a non-version and returns None. This correctly rejects
+            future sentinel strings ("N/A", "not found", "none") without
+            needing an ever-growing blacklist.
 
 Returns InstallerResult objects for every install_tool() call so that
 the engine and CLI have a typed, structured view of every outcome.
@@ -59,6 +68,8 @@ _REGISTRY: Dict[str, Type[BaseInstaller]] = {
 }
 
 
+import re as _re
+
 # ── Version helpers ────────────────────────────────────────────────────────────
 
 def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
@@ -69,9 +80,13 @@ def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
     timeout, or unexpected output does not propagate — it simply
     returns None (Phase 13 safety).
 
-    Returns None when:
-      - installer.version() raises any exception
-      - the returned string is 'not installed' or empty
+    Validation (Issue 6 fix):
+      Instead of checking against a hardcoded string blacklist
+      ("not installed", "unknown", ""), any string that does not
+      contain at least one digit is treated as a non-version and
+      returns None. This correctly rejects future sentinel strings
+      such as "N/A", "not found", and "none" without requiring an
+      ever-growing blacklist.
 
     Parameters
     ----------
@@ -85,28 +100,14 @@ def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
     """
     try:
         ver = installer.version()
-        if ver and ver not in ("not installed", "unknown", ""):
+        if ver and _re.search(r"\d", ver):
             debug(f"parsed version for {tool_name}: {ver}")
             return ver
+        debug(f"version() returned non-version string for {tool_name}: {repr(ver)}")
         return None
     except Exception as exc:
         debug(f"version() raised for {tool_name}: {exc}")
         return None
-
-
-def _verify_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
-    """
-    Run post-install version verification (Phase 4, Phase 10).
-
-    Same as _get_version but intended for use immediately after
-    install() — the caller must treat None as a verification failure.
-
-    Returns
-    -------
-    str | None
-        Version string, or None if verification failed.
-    """
-    return _get_version(installer, tool_name)
 
 
 # ── Registry helpers ───────────────────────────────────────────────────────────
@@ -259,7 +260,9 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
         )
 
     # ── Post-install version verification (Phase 4, Phase 10) ─────────────
-    ver = _verify_version(installer, tool_name)
+    # Issue 1 fix: call _get_version() directly; _verify_version() was a
+    # no-op wrapper that added indirection without any distinct behaviour.
+    ver = _get_version(installer, tool_name)
     if ver is None:
         vfail_msg = (
             f"{tool_name} version verification failed after installation. "
@@ -410,19 +413,34 @@ def _print_summary(summary: InstallSummary) -> None:
 
 
 def list_tools() -> Dict[str, str]:
-    """Return a dict of tool → version for all registered tools."""
+    """
+    Return a dict of tool → version for all registered tools.
+
+    Issue 3 fix: uses _get_version() instead of calling installer.version()
+    directly, so TimeoutExpired, CalledProcessError, and other subprocess
+    exceptions cannot crash 'devsetup list'.
+    """
     result = {}
     for name, cls in _REGISTRY.items():
         installer = cls()
-        result[name] = installer.version() if installer.detect() else "not installed"
+        ver = _get_version(installer, name)
+        result[name] = ver if ver is not None else "not installed"
     return result
 
 
 def tool_info(tool_name: str) -> Dict[str, str]:
-    """Return detection status and version for a single tool."""
+    """
+    Return detection status and version for a single tool.
+
+    Issue 3 fix: uses _get_version() instead of calling installer.version()
+    directly, so TimeoutExpired, CalledProcessError, and other subprocess
+    exceptions cannot crash 'devsetup info <tool>'.
+    """
     installer = get_installer(tool_name)
+    detected = installer.detect()
+    ver = _get_version(installer, tool_name) if detected else None
     return {
         "tool":      tool_name,
-        "installed": str(installer.detect()),
-        "version":   installer.version(),
+        "installed": str(detected),
+        "version":   ver if ver is not None else "not installed",
     }
