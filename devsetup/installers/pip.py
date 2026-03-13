@@ -5,6 +5,7 @@ Isolated installer module for pip.
 
 Uses PackageManagerRunner where available, ensurepip on brew/winget.
 Uses command_detector for reliable tool detection (Phase 9).
+Uses parse_version for clean version extraction (v1.3, Phase 3).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
 """
 
@@ -15,6 +16,7 @@ from devsetup.installers.base import BaseInstaller
 from devsetup.system.command_detector import command_runs
 from devsetup.system.package_managers import PackageManagerRunner
 from devsetup.utils.package_loader import load_package_name
+from devsetup.utils.version_parser import parse_version
 from devsetup.utils.logger import info
 
 
@@ -44,11 +46,18 @@ class PipInstaller(BaseInstaller):
             pm.install(package)
 
     def version(self) -> str:
-        """Return the installed pip version string."""
+        """
+        Return the installed pip version string.
+
+        Runs 'pip --version' with a 5-second timeout (v1.3, Phase 14).
+        Parses 'pip 23.0.1 from /usr/...' → '23.0.1' via parse_version
+        (v1.3, Phase 9).
+        Returns 'not installed' if pip is not detected.
+        """
         if not self.detect():
             return "not installed"
         result = subprocess.run(
             [sys.executable, "-m", "pip", "--version"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, timeout=5,
         )
-        return result.stdout.strip()
+        return parse_version(result.stdout)
