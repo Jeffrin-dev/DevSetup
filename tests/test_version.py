@@ -64,10 +64,10 @@ class TestVersionParser(unittest.TestCase):
     def test_none_like_whitespace_returns_unknown(self):
         self.assertEqual(parse_version("   "), "unknown")
 
-    def test_no_version_pattern_returns_first_line(self):
-        # When no version-like pattern is found, first line is returned as-is
+    def test_no_version_pattern_returns_unknown(self):
+        # Issue 4 fix: raw text with no digit must return 'unknown', never leak the string
         result = parse_version("something without numbers")
-        self.assertEqual(result, "something without numbers")
+        self.assertEqual(result, "unknown")
 
     def test_two_part_version(self):
         self.assertEqual(parse_version("tool 1.0"), "1.0")
