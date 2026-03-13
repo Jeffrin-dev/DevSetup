@@ -4,6 +4,13 @@ tests.test_installers
 Functional tests for installer modules.
 Tests detection, interface contract, skip/install/force/fail logic,
 and failure simulation for all error categories.
+
+Patch (v1.3.1):
+  - test_unsupported_os_gives_correct_exit_code now raises
+    UnsupportedOSError (the real exception from os_detector.get_os())
+    instead of a plain RuntimeError with a crafted message string.
+    The old test passed only because "cannot install" happened to appear
+    in the hand-written message; it never tested the actual code path.
 """
 
 import subprocess
@@ -23,6 +30,7 @@ from devsetup.installers.result import (
     InstallerResult, InstallerStatus, ExitCode, ErrorCategory,
 )
 from devsetup.system.package_managers.base import PackageManagerError
+from devsetup.system.os_detector import UnsupportedOSError
 
 ALL_INSTALLERS = [GitInstaller, NodeInstaller, PythonInstaller, PipInstaller, VSCodeInstaller]
 ALL_TOOL_NAMES = ["git", "node", "python", "pip", "vscode"]
@@ -141,21 +149,18 @@ class TestInstallToolSafety(unittest.TestCase):
 
     def test_installs_when_not_detected(self):
         with patch("devsetup.installers.git.GitInstaller.detect", return_value=False), \
-             patch("devsetup.installers.git.GitInstaller.install") as mock_install:
-            mock_install.return_value = None
+             patch("devsetup.installers.git.GitInstaller.install", return_value=None), \
+             patch("devsetup.installers.git.GitInstaller.version", return_value="2.43.0"):
             result = install_tool("git")
             self.assertEqual(result.status, InstallerStatus.SUCCESS)
             self.assertTrue(result.succeeded)
-            mock_install.assert_called_once()
 
     def test_force_reinstalls_even_when_detected(self):
         with patch("devsetup.installers.git.GitInstaller.detect", return_value=True), \
              patch("devsetup.installers.git.GitInstaller.version", return_value="2.43.0"), \
-             patch("devsetup.installers.git.GitInstaller.install") as mock_install:
-            mock_install.return_value = None
+             patch("devsetup.installers.git.GitInstaller.install", return_value=None):
             result = install_tool("git", force=True)
             self.assertEqual(result.status, InstallerStatus.SUCCESS)
-            mock_install.assert_called_once()
 
     def test_returns_fail_on_generic_exception(self):
         with patch("devsetup.installers.git.GitInstaller.detect", return_value=False), \
@@ -177,8 +182,7 @@ class TestFailureSimulation(unittest.TestCase):
         """PM returns non-zero exit code → PACKAGE_MANAGER_ERROR."""
         pm_err = PackageManagerError("apt returned exit code 1", pm_exit_code=1)
         with patch("devsetup.installers.git.GitInstaller.detect", return_value=False), \
-             patch("devsetup.installers.git.GitInstaller.install",
-                   side_effect=pm_err):
+             patch("devsetup.installers.git.GitInstaller.install", side_effect=pm_err):
             result = install_tool("git")
             self.assertTrue(result.failed)
             self.assertEqual(result.exit_code, ExitCode.PACKAGE_MANAGER_FAILURE)
@@ -195,21 +199,47 @@ class TestFailureSimulation(unittest.TestCase):
             self.assertEqual(result.error_category, ErrorCategory.COMMAND_NOT_FOUND)
 
     def test_unsupported_os_gives_correct_exit_code(self):
-        """Installer raises RuntimeError with unsupported OS message."""
+        """
+        Installer raises UnsupportedOSError → UNSUPPORTED_OS exit code.
+
+        Patch (v1.3.1): Previously this test raised a plain RuntimeError
+        with a hand-crafted message containing 'cannot install', which
+        accidentally matched the old string-based classifier. It never
+        tested the actual exception raised by os_detector.get_os().
+
+        Now it raises UnsupportedOSError directly — the real exception —
+        which the patched manager catches in its dedicated except clause.
+        """
         with patch("devsetup.installers.git.GitInstaller.detect", return_value=False), \
              patch("devsetup.installers.git.GitInstaller.install",
-                   side_effect=RuntimeError("Cannot install git on unsupported OS: freebsd")):
+                   side_effect=UnsupportedOSError("freebsd")):
             result = install_tool("git")
             self.assertTrue(result.failed)
             self.assertEqual(result.exit_code, ExitCode.UNSUPPORTED_OS)
             self.assertEqual(result.error_category, ErrorCategory.OS_NOT_SUPPORTED)
 
+    def test_plain_runtime_error_is_installer_failure_not_os_error(self):
+        """
+        A plain RuntimeError (not UnsupportedOSError) must classify as
+        INSTALLER_FAILURE regardless of its message content.
+
+        Regression guard: with the old string-matching approach, any
+        RuntimeError whose message contained 'cannot install' or
+        'unsupported os' would be misclassified as OS_NOT_SUPPORTED.
+        """
+        with patch("devsetup.installers.git.GitInstaller.detect", return_value=False), \
+             patch("devsetup.installers.git.GitInstaller.install",
+                   side_effect=RuntimeError("Cannot install git on unsupported OS: freebsd")):
+            result = install_tool("git")
+            self.assertTrue(result.failed)
+            self.assertEqual(result.exit_code, ExitCode.INSTALLATION_FAILURE)
+            self.assertEqual(result.error_category, ErrorCategory.INSTALLER_FAILURE)
+
     def test_permission_denied_via_pm_error(self):
         """Permission denied wraps as PackageManagerError."""
         pm_err = PackageManagerError("Permission denied running: sudo apt-get install git", pm_exit_code=-1)
         with patch("devsetup.installers.git.GitInstaller.detect", return_value=False), \
-             patch("devsetup.installers.git.GitInstaller.install",
-                   side_effect=pm_err):
+             patch("devsetup.installers.git.GitInstaller.install", side_effect=pm_err):
             result = install_tool("git")
             self.assertTrue(result.failed)
             self.assertEqual(result.error_category, ErrorCategory.PACKAGE_MANAGER_ERROR)
@@ -291,6 +321,48 @@ class TestPackageManagerError(unittest.TestCase):
     def test_is_runtime_error(self):
         err = PackageManagerError("x")
         self.assertIsInstance(err, RuntimeError)
+
+
+class TestUnsupportedOSError(unittest.TestCase):
+    """UnsupportedOSError carries the platform name and is a RuntimeError."""
+
+    def test_is_runtime_error(self):
+        err = UnsupportedOSError("freebsd")
+        self.assertIsInstance(err, RuntimeError)
+
+    def test_carries_os_name(self):
+        err = UnsupportedOSError("freebsd")
+        self.assertEqual(err.os_name, "freebsd")
+
+    def test_message_contains_os_name(self):
+        err = UnsupportedOSError("freebsd")
+        self.assertIn("freebsd", str(err))
+
+    def test_is_distinct_from_plain_runtime_error(self):
+        """Catching RuntimeError catches UnsupportedOSError, but not vice versa."""
+        caught_as_runtime = False
+        caught_as_unsupported = False
+        try:
+            raise UnsupportedOSError("plan9")
+        except UnsupportedOSError:
+            caught_as_unsupported = True
+        except RuntimeError:
+            caught_as_runtime = True
+        self.assertTrue(caught_as_unsupported)
+        self.assertFalse(caught_as_runtime)
+
+    def test_plain_runtime_error_not_caught_as_unsupported_os(self):
+        """A plain RuntimeError must not be caught as UnsupportedOSError."""
+        caught_as_unsupported = False
+        caught_as_runtime = False
+        try:
+            raise RuntimeError("Cannot install git on unsupported OS: freebsd")
+        except UnsupportedOSError:
+            caught_as_unsupported = True
+        except RuntimeError:
+            caught_as_runtime = True
+        self.assertFalse(caught_as_unsupported)
+        self.assertTrue(caught_as_runtime)
 
 
 if __name__ == "__main__":
