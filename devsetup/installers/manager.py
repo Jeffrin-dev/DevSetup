@@ -6,11 +6,19 @@ Installer manager / registry and install engine.
 The CLI calls this module — it never calls individual installers directly.
 Contains no OS logic. Contains no environment loading logic.
 
+v1.3 additions (Tool Version Verification):
+  - _get_version()     : safely retrieves version from installer (Phase 13)
+  - _verify_version()  : post-install version check, FAIL on missing (Phase 10)
+  - Version logged via [VERSION] after every install or skip (Phase 5)
+  - InstallerResult carries .version field (Phase 6)
+  - Summary displays version next to each tool name (Phase 7)
+  - Debug mode shows raw + parsed version detail (Phase 12)
+
 Returns InstallerResult objects for every install_tool() call so that
 the engine and CLI have a typed, structured view of every outcome.
 """
 
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 
 from devsetup.installers.base import BaseInstaller
 from devsetup.installers.git import GitInstaller
@@ -28,7 +36,9 @@ from devsetup.installers.result import (
 from devsetup.system.os_detector import get_os
 from devsetup.system.package_manager_detector import get_package_manager
 from devsetup.system.package_managers.base import PackageManagerError
-from devsetup.utils.logger import info, error, success, warn, check, skip, install, fail, debug
+from devsetup.utils.logger import (
+    info, error, success, warn, check, skip, install, fail, debug, version_log,
+)
 
 # Registry: tool name → installer class
 _REGISTRY: Dict[str, Type[BaseInstaller]] = {
@@ -39,6 +49,58 @@ _REGISTRY: Dict[str, Type[BaseInstaller]] = {
     "vscode": VSCodeInstaller,
 }
 
+
+# ── Version helpers ────────────────────────────────────────────────────────────
+
+def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
+    """
+    Safely retrieve the installed version from an installer.
+
+    Wraps installer.version() in a try/except so that any crash,
+    timeout, or unexpected output does not propagate — it simply
+    returns None (Phase 13 safety).
+
+    Returns None when:
+      - installer.version() raises any exception
+      - the returned string is 'not installed' or empty
+
+    Parameters
+    ----------
+    installer : BaseInstaller
+    tool_name : str
+        Used only for debug logging.
+
+    Returns
+    -------
+    str | None
+    """
+    try:
+        ver = installer.version()
+        if ver and ver not in ("not installed", "unknown", ""):
+            debug(f"parsed version for {tool_name}: {ver}")
+            return ver
+        return None
+    except Exception as exc:
+        debug(f"version() raised for {tool_name}: {exc}")
+        return None
+
+
+def _verify_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
+    """
+    Run post-install version verification (Phase 4, Phase 10).
+
+    Same as _get_version but intended for use immediately after
+    install() — the caller must treat None as a verification failure.
+
+    Returns
+    -------
+    str | None
+        Version string, or None if verification failed.
+    """
+    return _get_version(installer, tool_name)
+
+
+# ── Registry helpers ───────────────────────────────────────────────────────────
 
 def is_registered(tool_name: str) -> bool:
     """Return True if tool_name exists in the installer registry."""
@@ -62,9 +124,14 @@ def get_installer(tool_name: str) -> BaseInstaller:
     return _REGISTRY[tool_name]()
 
 
+# ── Core install engine ────────────────────────────────────────────────────────
+
 def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
     """
     Detect and, if necessary, install a single tool.
+
+    Pipeline (v1.3):
+        check → [skip | install] → version verification → result
 
     Parameters
     ----------
@@ -76,7 +143,8 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
     Returns
     -------
     InstallerResult
-        Typed result with status, exit code, message, and error category.
+        Typed result with status, exit code, message, error category,
+        and confirmed version string.
     """
     installer = get_installer(tool_name)
 
@@ -88,19 +156,25 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
         already_installed = installer.detect()
     except Exception as exc:
         msg = f"{tool_name} detection failed: {exc}"
-        fail(f"{msg} | exit_code={ExitCode.DETECTION_ERROR} | category={ErrorCategory.INSTALLER_FAILURE}")
+        fail(
+            f"{msg} | exit_code={ExitCode.DETECTION_ERROR} "
+            f"| category={ErrorCategory.INSTALLER_FAILURE}"
+        )
         return InstallerResult.fail(
             tool_name, msg,
             exit_code=ExitCode.DETECTION_ERROR,
             error_category=ErrorCategory.INSTALLER_FAILURE,
         )
 
-    # ── Skip ───────────────────────────────────────────────────────────────
+    # ── Skip path ──────────────────────────────────────────────────────────
     if not force and already_installed:
-        ver = installer.version()
-        skip_msg = f"{tool_name} already installed ({ver})"
+        # Phase 11 — show version even for skipped tools
+        ver = _get_version(installer, tool_name)
+        ver_display = ver or "unknown"
+        skip_msg = f"{tool_name} already installed ({ver_display})"
         skip(skip_msg)
-        return InstallerResult.skip(tool_name, skip_msg)
+        version_log(ver_display)                       # Phase 5
+        return InstallerResult.skip(tool_name, skip_msg, version=ver)  # Phase 6
 
     if force and already_installed:
         warn(f"--force enabled. Reinstalling {tool_name}.")
@@ -109,9 +183,7 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
     install(tool_name)
     try:
         installer.install()
-        ok_msg = f"{tool_name} installed successfully."
-        success(ok_msg)
-        return InstallerResult.success(tool_name, ok_msg)
+        success(f"{tool_name} installed successfully.")
 
     except PackageManagerError as exc:
         exit_code = ExitCode.PACKAGE_MANAGER_FAILURE
@@ -121,7 +193,9 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
             f"| exit_code={exit_code} | category={category}"
         )
         fail(msg)
-        return InstallerResult.fail(tool_name, str(exc), exit_code=exit_code, error_category=category)
+        return InstallerResult.fail(
+            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        )
 
     except FileNotFoundError as exc:
         exit_code = ExitCode.INSTALLATION_FAILURE
@@ -131,7 +205,9 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
             f"| exit_code={exit_code} | category={category}"
         )
         fail(msg)
-        return InstallerResult.fail(tool_name, str(exc), exit_code=exit_code, error_category=category)
+        return InstallerResult.fail(
+            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        )
 
     except RuntimeError as exc:
         src = str(exc).lower()
@@ -146,10 +222,11 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
             f"| exit_code={exit_code} | category={category}"
         )
         fail(msg)
-        return InstallerResult.fail(tool_name, str(exc), exit_code=exit_code, error_category=category)
+        return InstallerResult.fail(
+            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        )
 
     except Exception as exc:
-        # Safety guard: convert any unexpected crash to a FAIL result
         exit_code = ExitCode.INSTALLATION_FAILURE
         category  = ErrorCategory.INSTALLER_FAILURE
         msg = (
@@ -157,13 +234,38 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
             f"| exit_code={exit_code} | category={category}"
         )
         fail(msg)
-        return InstallerResult.fail(tool_name, str(exc), exit_code=exit_code, error_category=category)
+        return InstallerResult.fail(
+            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        )
+
+    # ── Post-install version verification (Phase 4, Phase 10) ─────────────
+    ver = _verify_version(installer, tool_name)
+    if ver is None:
+        vfail_msg = (
+            f"{tool_name} version verification failed after installation. "
+            f"The tool may not have installed correctly."
+        )
+        fail(
+            f"[VERSION CHECK FAILED] {tool_name} "
+            f"| exit_code={ExitCode.VERIFICATION_FAILURE} "
+            f"| category={ErrorCategory.VERIFICATION_FAILURE}"
+        )
+        return InstallerResult.fail(
+            tool_name,
+            vfail_msg,
+            exit_code=ExitCode.VERIFICATION_FAILURE,
+            error_category=ErrorCategory.VERIFICATION_FAILURE,
+        )
+
+    version_log(ver)   # Phase 5
+    ok_msg = f"{tool_name} installed successfully."
+    return InstallerResult.success(tool_name, ok_msg, version=ver)  # Phase 6
 
 
 def install_environment(
     tools: List[str],
     force: bool = False,
-    env_name: str | None = None,
+    env_name: Optional[str] = None,
 ) -> None:
     """
     Install all tools defined in an environment config.
@@ -177,7 +279,6 @@ def install_environment(
         If True, reinstall all tools even if already present.
     env_name : str | None
         Human-readable environment name shown in the summary header.
-        Pass the ``name`` field from the environment JSON config.
 
     Raises
     ------
@@ -224,31 +325,20 @@ def _print_summary(summary: InstallSummary) -> None:
     """
     Print the installation report.
 
-    Format
-    ------
-    If an environment name is available it appears as a header.
-    Each section uses a count prefix when non-empty so large environments
-    are easy to scan at a glance.  Empty sections display 'none'.
+    v1.3 — version strings are displayed next to each tool name (Phase 7):
 
-    Example (non-empty installed, one skip, one failure):
-
-        Environment: Web
-
-        Installation Summary
-        --------------------
         Installed (2):
-          git
-          python
+          git (2.43.0)
+          node (20.11.1)
 
         Skipped (1):
-          vscode
+          vscode (1.86.0)
 
         Failed:
-          node  (exit_code=4, category=PACKAGE_MANAGER_ERROR)
+          python  (exit_code=5, category=VERIFICATION_FAILURE)
     """
     info("")
 
-    # Phase 11 — environment name header
     if summary.env_name:
         info(f"Environment: {summary.env_name}")
         info("")
@@ -256,34 +346,42 @@ def _print_summary(summary: InstallSummary) -> None:
     info("Installation Summary")
     info("--------------------")
 
-    # Phase 12 — count prefix when non-empty
+    # ── Installed ──────────────────────────────────────────────────────────
     n_installed = len(summary.installed)
     if n_installed:
         info(f"Installed ({n_installed}):")
         for t in summary.installed:
-            info(f"  {t}")
+            result = summary.result_map.get(t)
+            ver_suffix = f" ({result.version})" if result and result.version else ""
+            info(f"  {t}{ver_suffix}")
     else:
         info("Installed:")
         info("  none")
 
     info("")
 
+    # ── Skipped ────────────────────────────────────────────────────────────
     n_skipped = len(summary.skipped)
     if n_skipped:
         info(f"Skipped ({n_skipped}):")
         for t in summary.skipped:
-            info(f"  {t}")
+            result = summary.result_map.get(t)
+            ver_suffix = f" ({result.version})" if result and result.version else ""
+            info(f"  {t}{ver_suffix}")
     else:
         info("Skipped:")
         info("  none")
 
     info("")
 
+    # ── Failed ─────────────────────────────────────────────────────────────
     if summary.failed_result:
         fr = summary.failed_result
-        info(f"Failed:")
-        info(f"  {fr.installer_id}  "
-             f"(exit_code={fr.exit_code}, category={fr.error_category})")
+        info("Failed:")
+        info(
+            f"  {fr.installer_id}  "
+            f"(exit_code={fr.exit_code}, category={fr.error_category})"
+        )
     else:
         info("Failed:")
         info("  none")
