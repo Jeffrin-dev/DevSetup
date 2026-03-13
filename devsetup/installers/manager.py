@@ -14,6 +14,15 @@ v1.3 additions (Tool Version Verification):
   - Summary displays version next to each tool name (Phase 7)
   - Debug mode shows raw + parsed version detail (Phase 12)
 
+Patch (v1.3.1):
+  - Replaced fragile RuntimeError string matching with a precise
+    UnsupportedOSError catch. Previously, 'unsupported os' and
+    'cannot install' were matched against the lowercased exception
+    message — neither string matched the actual message raised by
+    os_detector.get_os(), so OS errors were always misclassified
+    as INSTALLER_FAILURE. Now UnsupportedOSError is caught as its
+    own except clause before the generic RuntimeError handler.
+
 Returns InstallerResult objects for every install_tool() call so that
 the engine and CLI have a typed, structured view of every outcome.
 """
@@ -33,7 +42,7 @@ from devsetup.installers.result import (
     ExitCode,
     ErrorCategory,
 )
-from devsetup.system.os_detector import get_os
+from devsetup.system.os_detector import get_os, UnsupportedOSError
 from devsetup.system.package_manager_detector import get_package_manager
 from devsetup.system.package_managers.base import PackageManagerError
 from devsetup.utils.logger import (
@@ -209,14 +218,25 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
             tool_name, str(exc), exit_code=exit_code, error_category=category,
         )
 
+    except UnsupportedOSError as exc:
+        # Precise catch for unsupported OS — no string matching required.
+        # UnsupportedOSError is raised by get_os() in os_detector.py and
+        # may be re-raised by installer modules that call it internally.
+        exit_code = ExitCode.UNSUPPORTED_OS
+        category  = ErrorCategory.OS_NOT_SUPPORTED
+        msg = (
+            f"{tool_name} installation failed: unsupported OS — {exc} "
+            f"| exit_code={exit_code} | category={category}"
+        )
+        fail(msg)
+        return InstallerResult.fail(
+            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        )
+
     except RuntimeError as exc:
-        src = str(exc).lower()
-        if "unsupported os" in src or "cannot install" in src:
-            exit_code = ExitCode.UNSUPPORTED_OS
-            category  = ErrorCategory.OS_NOT_SUPPORTED
-        else:
-            exit_code = ExitCode.INSTALLATION_FAILURE
-            category  = ErrorCategory.INSTALLER_FAILURE
+        # Generic RuntimeError from installer modules (not OS-related).
+        exit_code = ExitCode.INSTALLATION_FAILURE
+        category  = ErrorCategory.INSTALLER_FAILURE
         msg = (
             f"{tool_name} installation failed: {exc} "
             f"| exit_code={exit_code} | category={category}"
