@@ -7,12 +7,19 @@ Uses PackageManagerRunner for installation (Architecture Rule 5).
 Uses command_detector for reliable tool detection (Phase 9).
 Uses parse_version for clean version extraction (v1.3, Phase 3).
 Implements the standard BaseInstaller interface (Architecture Rule 4).
+
+Patch (v1.3.2 — Issue 2):
+  version() previously called self.detect() before running the version
+  subprocess. detect() calls command_runs("git"), which itself executes
+  'git --version' to verify exit code 0 — meaning the version command
+  ran twice on every fresh install. Fixed by using command_exists("git")
+  (shutil.which only, no subprocess) as the presence guard.
 """
 
 import subprocess
 
 from devsetup.installers.base import BaseInstaller
-from devsetup.system.command_detector import command_runs
+from devsetup.system.command_detector import command_exists, command_runs
 from devsetup.system.package_managers import PackageManagerRunner
 from devsetup.utils.package_loader import load_package_name
 from devsetup.utils.version_parser import parse_version
@@ -35,11 +42,12 @@ class GitInstaller(BaseInstaller):
         """
         Return the installed git version string.
 
+        Uses command_exists() (shutil.which only) rather than detect()
+        to avoid running 'git --version' twice (Issue 2 fix).
         Runs 'git --version' with a 5-second timeout (v1.3, Phase 14).
-        Parses the output to return a clean version number (e.g. '2.43.0').
-        Returns 'not installed' if git is not detected.
+        Returns 'not installed' if git binary is not on PATH.
         """
-        if not self.detect():
+        if not command_exists("git"):
             return "not installed"
         result = subprocess.run(
             ["git", "--version"],
