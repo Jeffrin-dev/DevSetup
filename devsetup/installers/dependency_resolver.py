@@ -16,18 +16,19 @@ Public API
       Raises DependencyError on cycle, missing registry entry, or missing
       tool reference.
 
-  get_blocked(tool, graph, failed_or_blocked) -> bool
-      Return True if any of tool's dependencies are in the failed/blocked set.
+  get_blocked(tool, graph, failed_or_blocked) -> Optional[str]
+      Return the first failing dependency ID, or None if the tool is unblocked.
 
 Complexity (Phase 14)
 ---------------------
-  build_graph      : O(n + e)  where n = tools, e = total dependency edges
-  topological_sort : O(n + e)  Kahn's algorithm
-  cycle detection  : O(n + e)  DFS coloring, runs only when Kahn detects cycle
+  build_graph      : O(n + e)      where n = tools, e = total dependency edges
+  topological_sort : O((n+e) log n) Kahn's algorithm with min-heap
+  cycle detection  : O(n + e)      DFS coloring, runs only when Kahn detects cycle
 """
 
 from __future__ import annotations
 
+import heapq
 from typing import Dict, List, Optional, Set, Type, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -89,12 +90,38 @@ def resolve(
         If a dependency is not registered, not in the tool list, or a
         cycle is detected.
     """
-    if not tools:
-        return []
+    ordered, _ = resolve_with_graph(tools, registry)
+    return ordered
 
-    graph = _build_graph(tools, registry)
+
+def resolve_with_graph(
+    tools: List[str],
+    registry: Dict[str, Type],
+) -> tuple:
+    """
+    Return (ordered_tools, graph) in a single call.
+
+    Eliminates the double graph-build that occurs when callers first call
+    build_graph() for logging, then resolve() for ordering. manager.py
+    uses this entry point so the adjacency map is constructed exactly once.
+
+    Returns
+    -------
+    tuple[List[str], Dict[str, List[str]]]
+        (ordered_tools, graph)
+
+    Raises
+    ------
+    DependencyError
+        If a dependency is not registered, not in the tool list, or a
+        cycle is detected.
+    """
+    if not tools:
+        return [], {}
+
+    graph = build_graph(tools, registry)
     _validate(tools, graph, registry)
-    return _topological_sort(tools, graph)
+    return _topological_sort(tools, graph), graph
 
 
 def get_blocked(
@@ -125,25 +152,10 @@ def get_blocked(
     return None
 
 
-def build_graph(
-    tools: List[str],
-    registry: Dict[str, Type],
-) -> Dict[str, List[str]]:
-    """
-    Public wrapper around _build_graph for use in manager logging.
-
-    Returns
-    -------
-    Dict[str, List[str]]
-        Adjacency map: tool -> list of its direct dependencies
-        (only those present in the tool list).
-    """
-    return _build_graph(tools, registry)
-
 
 # ── Internal implementation ───────────────────────────────────────────────────
 
-def _build_graph(
+def build_graph(
     tools: List[str],
     registry: Dict[str, Type],
 ) -> Dict[str, List[str]]:
@@ -153,6 +165,9 @@ def _build_graph(
     Only dependencies that appear in ``tools`` are included — dependencies
     on tools outside the environment are caught by _validate() and raise
     DependencyError there.
+
+    Called internally by resolve() and exposed as public API so tests and
+    callers can inspect the graph directly without running the full resolver.
 
     Complexity: O(n + e)
     """
@@ -214,11 +229,14 @@ def _topological_sort(
     graph: Dict[str, List[str]],
 ) -> List[str]:
     """
-    Kahn's algorithm — O(n + e).
+    Kahn's algorithm with a min-heap priority queue — O((n + e) log n).
 
     Produces a deterministic order: among tools with equal in-degree at
     any step, alphabetical ordering is applied so the result is stable
     across Python versions and runtime state.
+
+    The heap provides O(log n) push and pop, replacing the previous
+    list.pop(0) + list.sort() approach which was O(n² log n).
 
     Raises DependencyError with cycle path when a cycle is detected.
     """
@@ -231,20 +249,21 @@ def _topological_sort(
     # Initial in-degree = number of dependencies each tool has
     in_degree: Dict[str, int] = {t: len(graph[t]) for t in tools}
 
-    # Queue: all tools with no dependencies, sorted for determinism
-    queue: List[str] = sorted(t for t in tools if in_degree[t] == 0)
+    # Min-heap of tool names with no remaining dependencies.
+    # Python strings compare lexicographically, so heapq gives alphabetical
+    # ordering for free — determinism without an explicit sort() call.
+    heap: List[str] = [t for t in tools if in_degree[t] == 0]
+    heapq.heapify(heap)
     ordered: List[str] = []
 
-    while queue:
-        # Take alphabetically first ready tool (determinism guarantee)
-        tool = queue.pop(0)
+    while heap:
+        tool = heapq.heappop(heap)   # O(log n) — alphabetically smallest ready tool
         ordered.append(tool)
 
-        for dependent in sorted(dependents[tool]):
+        for dependent in dependents[tool]:
             in_degree[dependent] -= 1
             if in_degree[dependent] == 0:
-                queue.append(dependent)
-                queue.sort()
+                heapq.heappush(heap, dependent)   # O(log n)
 
     if len(ordered) != len(tools):
         # Not all nodes processed — cycle exists
