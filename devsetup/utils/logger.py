@@ -91,3 +91,27 @@ def debug(message: str) -> None:
     """Print a debug message to stdout (only when DEVSETUP_DEBUG=1)."""
     if _is_debug():
         print(f"[{_timestamp()}] [DEBUG]   {message}")
+
+
+def blocked(message: str) -> None:
+    """
+    Print a blocked tool message to stderr (v1.4).
+
+    Used when a tool is not installed because a dependency failed.
+
+    Example output:
+        [HH:MM:SS] [BLOCKED] vscode (dependency 'node' failed)
+    """
+    print(f"[{_timestamp()}] [BLOCKED] {message}", file=sys.stderr)
+
+
+def dep_order(message: str) -> None:
+    """
+    Print a dependency resolution message to stdout (v1.4).
+
+    Used to log the computed install order before execution begins.
+
+    Example output:
+        [HH:MM:SS] [DEPS]    Computed install order: git → node → vscode
+    """
+    print(f"[{_timestamp()}] [DEPS]    {message}")
