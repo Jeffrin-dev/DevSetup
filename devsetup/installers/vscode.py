@@ -7,6 +7,7 @@ Patch (v1.3.2 — Issue 2): version() uses command_exists() not detect().
 """
 
 import subprocess
+from typing import List
 
 from devsetup.installers.base import BaseInstaller
 from devsetup.system.command_detector import command_exists, command_runs
@@ -17,6 +18,7 @@ from devsetup.utils.logger import info
 
 
 class VSCodeInstaller(BaseInstaller):
+    dependencies: List[str] = []  # no prerequisites — vscode appears in envs without node
     tool_name = "vscode"
 
     def detect(self) -> bool:
