@@ -8,13 +8,6 @@ Plugin rules (Architecture Rule 7):
   - Plugins cannot modify core DevSetup modules
   - Every plugin load is wrapped in try/except — failures never crash DevSetup
   - Each plugin must expose a register(registry) function
-
-Usage
------
-    from devsetup.core.plugin_loader import load_plugins
-    load_plugins(registry)
-
-Where registry is a dict[str, Type[BaseInstaller]].
 """
 
 import importlib.util
@@ -38,12 +31,6 @@ def load_plugins(registry: Dict[str, Type]) -> None:
         def register(registry: dict) -> None
 
     Plugin failures are caught and logged — they never crash DevSetup.
-
-    Parameters
-    ----------
-    registry : dict
-        The live installer registry from manager.py.
-        Plugins may only add new keys, never overwrite existing ones.
     """
     if not os.path.isdir(_PLUGIN_DIR):
         debug(f"Plugin directory not found: {_PLUGIN_DIR} — skipping plugin load")
@@ -60,17 +47,12 @@ def load_plugins(registry: Dict[str, Type]) -> None:
 
     for filename in plugin_files:
         plugin_path = os.path.join(_PLUGIN_DIR, filename)
-        plugin_name = filename[:-3]  # strip .py
+        plugin_name = filename[:-3]
         _load_one(plugin_name, plugin_path, registry)
 
 
 def _load_one(name: str, path: str, registry: Dict[str, Type]) -> None:
-    """
-    Load a single plugin file.
-
-    Sandboxed: any exception during import or registration is caught,
-    logged as a warning, and execution continues.
-    """
+    """Load a single plugin file, sandboxed against any exception."""
     try:
         spec = importlib.util.spec_from_file_location(
             f"devsetup_plugin_{name}", path
@@ -86,12 +68,11 @@ def _load_one(name: str, path: str, registry: Dict[str, Type]) -> None:
             warn(f"Plugin '{name}': missing register(registry) function — skipped")
             return
 
-        # Pass a guarded proxy so plugins cannot overwrite core tools
         guarded = _GuardedRegistry(registry, source=name)
         module.register(guarded)
         info(f"Plugin '{name}': loaded successfully")
 
-    except Exception as exc:  # noqa: BLE001 — intentional broad catch (sandbox rule)
+    except Exception as exc:  # noqa: BLE001
         warn(f"Plugin '{name}': failed to load — {exc} (skipped, DevSetup continues)")
 
 
@@ -99,11 +80,9 @@ class _GuardedRegistry(dict):
     """
     A dict proxy passed to plugin register() functions.
 
-    Allows plugins to add new tool IDs only.
-    Raises ValueError if a plugin tries to overwrite a core or already-registered tool.
+    Allows plugins to add new tool IDs only — cannot overwrite core tools.
     """
 
-    # Core tools that can never be overwritten by a plugin
     _CORE_IDS = frozenset({"git", "node", "pip", "python", "vscode"})
 
     def __init__(self, real_registry: dict, source: str) -> None:
