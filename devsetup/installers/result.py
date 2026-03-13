@@ -3,12 +3,20 @@ devsetup.installers.result
 ---------------------------
 Structured result contract for the installer engine.
 
+v1.3 additions:
+  - InstallerResult.version       — stores the verified installed version
+  - ExitCode.VERIFICATION_FAILURE — version command failed post-install
+  - ErrorCategory.VERIFICATION_FAILURE
+  - InstallSummary.result_map     — maps tool_id → InstallerResult for
+                                    version display in the summary (Phase 7)
+
 Replaces loose string return values with a typed object that carries:
   - installer_id    : which tool was being processed
   - status          : SUCCESS | SKIP | FAIL
   - exit_code       : numeric code from the global ExitCode contract
   - message         : human-readable description
   - error_category  : optional error classification (None on success/skip)
+  - version         : confirmed installed version string, or None
 
 Also provides InstallSummary — the accumulator that collects every
 installer result during install_environment() and builds the final report.
@@ -20,6 +28,7 @@ Exit Code Contract
   2  → detection error
   3  → unsupported OS
   4  → package manager failure
+  5  → version verification failure (v1.3)
 
 Error Categories
 ----------------
@@ -28,13 +37,14 @@ Error Categories
   OS_NOT_SUPPORTED       — OS not in supported set
   COMMAND_NOT_FOUND      — required binary absent from PATH
   CONFIG_ERROR           — environment or package config invalid
+  VERIFICATION_FAILURE   — version command failed or timed out (v1.3)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 # ── Status ────────────────────────────────────────────────────────────────────
@@ -59,6 +69,7 @@ class ExitCode:
     DETECTION_ERROR         = 2
     UNSUPPORTED_OS          = 3
     PACKAGE_MANAGER_FAILURE = 4
+    VERIFICATION_FAILURE    = 5   # v1.3 — version command failed post-install
 
 
 # ── Error categories ──────────────────────────────────────────────────────────
@@ -73,6 +84,7 @@ class ErrorCategory:
     OS_NOT_SUPPORTED      = "OS_NOT_SUPPORTED"
     COMMAND_NOT_FOUND     = "COMMAND_NOT_FOUND"
     CONFIG_ERROR          = "CONFIG_ERROR"
+    VERIFICATION_FAILURE  = "VERIFICATION_FAILURE"   # v1.3
 
 
 # ── Result object ─────────────────────────────────────────────────────────────
@@ -94,33 +106,49 @@ class InstallerResult:
         Human-readable description of the outcome.
     error_category : str | None
         Error classification string from ErrorCategory, or None on success/skip.
+    version : str | None
+        Confirmed installed version string (e.g. '2.43.0'), or None if
+        version verification was not performed or failed (v1.3).
     """
     installer_id:   str
     status:         InstallerStatus
     exit_code:      int
     message:        str
     error_category: Optional[str] = None
+    version:        Optional[str] = None   # v1.3
 
     # ── Named constructors ────────────────────────────────────────────────────
 
     @classmethod
-    def success(cls, installer_id: str, message: str = "") -> InstallerResult:
-        """Build a SUCCESS result."""
+    def success(
+        cls,
+        installer_id: str,
+        message: str = "",
+        version: Optional[str] = None,
+    ) -> InstallerResult:
+        """Build a SUCCESS result, optionally carrying a verified version."""
         return cls(
             installer_id=installer_id,
             status=InstallerStatus.SUCCESS,
             exit_code=ExitCode.SUCCESS,
             message=message or f"{installer_id} installed successfully.",
+            version=version,
         )
 
     @classmethod
-    def skip(cls, installer_id: str, message: str = "") -> InstallerResult:
-        """Build a SKIP result (tool already present)."""
+    def skip(
+        cls,
+        installer_id: str,
+        message: str = "",
+        version: Optional[str] = None,
+    ) -> InstallerResult:
+        """Build a SKIP result, optionally carrying the existing version."""
         return cls(
             installer_id=installer_id,
             status=InstallerStatus.SKIP,
             exit_code=ExitCode.SUCCESS,
             message=message or f"{installer_id} already installed.",
+            version=version,
         )
 
     @classmethod
@@ -175,11 +203,15 @@ class InstallSummary:
         Installer IDs that were SKIP-ped, in execution order.
     failed_result : InstallerResult | None
         The single FAIL result that stopped the pipeline, or None.
+    result_map : dict[str, InstallerResult]
+        Full result object keyed by installer_id — used by the summary
+        printer to look up version strings (v1.3, Phase 7).
     """
-    env_name:      Optional[str]            = None
-    installed:     List[str]                = field(default_factory=list)
-    skipped:       List[str]                = field(default_factory=list)
+    env_name:      Optional[str]             = None
+    installed:     List[str]                 = field(default_factory=list)
+    skipped:       List[str]                 = field(default_factory=list)
     failed_result: Optional[InstallerResult] = field(default=None)
+    result_map:    Dict[str, InstallerResult] = field(default_factory=dict)   # v1.3
 
     def record(self, result: InstallerResult) -> None:
         """
@@ -202,6 +234,9 @@ class InstallSummary:
         )
         if tool in already_seen:
             return
+
+        # v1.3: store full result for version lookup in summary printer
+        self.result_map[tool] = result
 
         if result.status == InstallerStatus.SUCCESS:
             self.installed.append(tool)
