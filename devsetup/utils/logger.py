@@ -14,6 +14,7 @@ Log levels supported:
   [INSTALL] — tool installation starting
   [OK]      — success confirmation
   [FAIL]    — installation failure
+  [VERSION] — confirmed installed version (v1.3)
 
 All messages include a timestamp for debugging.
 """
@@ -71,6 +72,19 @@ def install(message: str) -> None:
 def fail(message: str) -> None:
     """Print a failure message to stderr."""
     print(f"[{_timestamp()}] [FAIL]    {message}", file=sys.stderr)
+
+
+def version_log(message: str) -> None:
+    """
+    Print a confirmed version string to stdout.
+
+    Used after installation or skip to confirm the tool is present
+    and working (v1.3 — Phase 5).
+
+    Example output:
+        [HH:MM:SS] [VERSION] 2.43.0
+    """
+    print(f"[{_timestamp()}] [VERSION] {message}")
 
 
 def debug(message: str) -> None:
