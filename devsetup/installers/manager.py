@@ -59,8 +59,7 @@ from devsetup.installers.python import PythonInstaller
 from devsetup.installers.vscode import VSCodeInstaller
 from devsetup.installers.dependency_resolver import (
     DependencyError,
-    resolve,
-    build_graph,
+    resolve_with_graph,
     get_blocked,
 )
 from devsetup.installers.result import (
@@ -326,8 +325,7 @@ def install_environment(
     # ── 2–4. Dependency resolution (Phases 4–6) ────────────────────────────
     dep_order("Resolving dependencies...")
     try:
-        graph = build_graph(tools, _REGISTRY)
-        ordered_tools = resolve(tools, _REGISTRY)
+        ordered_tools, graph = resolve_with_graph(tools, _REGISTRY)
     except DependencyError as exc:
         error(str(exc))
         raise
@@ -377,11 +375,11 @@ def install_environment(
     if summary.has_failure or summary.has_blocked:
         parts = []
         if summary.has_failure:
-            fr = summary.failed_result
-            parts.append(
-                f"{fr.installer_id} failed "
-                f"(exit_code={fr.exit_code}, category={fr.error_category})"
-            )
+            for fr in summary.failed_results:
+                parts.append(
+                    f"{fr.installer_id} failed "
+                    f"(exit_code={fr.exit_code}, category={fr.error_category})"
+                )
         if summary.has_blocked:
             parts.append(f"{len(summary.blocked)} tool(s) blocked: {', '.join(summary.blocked)}")
         raise RuntimeError(
@@ -455,13 +453,14 @@ def _print_summary(summary: InstallSummary) -> None:
     info("")
 
     # Failed
-    if summary.failed_result:
-        fr = summary.failed_result
-        info("Failed:")
-        info(
-            f"  {fr.installer_id}  "
-            f"(exit_code={fr.exit_code}, category={fr.error_category})"
-        )
+    all_failures = summary.failed_results
+    if all_failures:
+        info(f"Failed ({len(all_failures)}):" if len(all_failures) > 1 else "Failed:")
+        for fr in all_failures:
+            info(
+                f"  {fr.installer_id}  "
+                f"(exit_code={fr.exit_code}, category={fr.error_category})"
+            )
     else:
         info("Failed:")
         info("  none")
@@ -476,9 +475,7 @@ def _print_summary(summary: InstallSummary) -> None:
             res = summary.result_map.get(t)
             reason = ""
             if res and res.message:
-                # Extract "blocking dep" from message for compact display
-                import re
-                m = re.search(r"dependency '([^']+)'", res.message)
+                m = _re.search(r"dependency '([^']+)'", res.message)
                 reason = f"  (blocked by: {m.group(1)})" if m else ""
             info(f"  {t}{reason}")
     else:
