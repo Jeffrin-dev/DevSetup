@@ -7,36 +7,49 @@ The CLI calls this module — it never calls individual installers directly.
 Contains no OS logic. Contains no environment loading logic.
 
 v1.3 additions (Tool Version Verification):
-  - _get_version()     : safely retrieves version from installer (Phase 13)
-  - Version logged via [VERSION] after every install or skip (Phase 5)
-  - InstallerResult carries .version field (Phase 6)
-  - Summary displays version next to each tool name (Phase 7)
-  - Debug mode shows raw + parsed version detail (Phase 12)
+  - _get_version()  : safely retrieves version from installer
+  - Version logged via [VERSION] after every install or skip
+  - InstallerResult carries .version field
+  - Summary displays version next to each tool name
 
-Patch (v1.3.1):
-  - Replaced fragile RuntimeError string matching with a precise
-    UnsupportedOSError catch.
+v1.3.1:
+  - Replaced fragile RuntimeError string matching with UnsupportedOSError.
 
-Patch (v1.3.2):
-  Issue 1 — Removed _verify_version(), which was a no-op wrapper that
-            delegated entirely to _get_version(). Call sites now call
-            _get_version() directly with a comment identifying intent.
-  Issue 3 — list_tools() and tool_info() now use _get_version() instead
-            of calling installer.version() directly, preventing unhandled
-            exceptions (TimeoutExpired, CalledProcessError, etc.) from
-            crashing devsetup info or devsetup list.
-  Issue 6 — Replaced the sentinel string blacklist in _get_version()
-            ("not installed", "unknown", "") with a regex digit check.
-            Any string that does not contain at least one digit is treated
-            as a non-version and returns None. This correctly rejects
-            future sentinel strings ("N/A", "not found", "none") without
-            needing an ever-growing blacklist.
+v1.3.2:
+  - Removed _verify_version() no-op wrapper
+  - list_tools() / tool_info() use _get_version() safety wrapper
+  - Sentinel blacklist replaced with digit-presence check
 
-Returns InstallerResult objects for every install_tool() call so that
-the engine and CLI have a typed, structured view of every outcome.
+v1.4 (Dependency Ordering — Phases 8–12):
+  - install_environment() now runs a full dependency resolution pipeline
+    before executing any installers:
+
+      load tools
+        ↓
+      build dependency graph       (dependency_resolver.build_graph)
+        ↓
+      validate dependency refs     (dependency_resolver._validate)
+        ↓
+      topological sort             (dependency_resolver.resolve)
+        ↓
+      log computed order           ([DEPS] log lines)
+        ↓
+      execute in resolved order
+        ↓
+      block tools whose deps failed (InstallerResult.block)
+        ↓
+      print summary (with Blocked section)
+
+  - Pipeline no longer stops on first failure; instead, tools whose
+    dependency failed are marked BLOCKED and skipped. Independent tools
+    continue to run. RuntimeError is raised at the end if any FAIL or
+    BLOCKED results were recorded.
+
+  - _print_summary() extended with Blocked section (Phase 11).
 """
 
-from typing import Dict, List, Optional, Type
+import re as _re
+from typing import Dict, List, Optional, Set, Type
 
 from devsetup.installers.base import BaseInstaller
 from devsetup.installers.git import GitInstaller
@@ -44,6 +57,12 @@ from devsetup.installers.node import NodeInstaller
 from devsetup.installers.pip import PipInstaller
 from devsetup.installers.python import PythonInstaller
 from devsetup.installers.vscode import VSCodeInstaller
+from devsetup.installers.dependency_resolver import (
+    DependencyError,
+    resolve,
+    build_graph,
+    get_blocked,
+)
 from devsetup.installers.result import (
     InstallerResult,
     InstallerStatus,
@@ -55,10 +74,12 @@ from devsetup.system.os_detector import get_os, UnsupportedOSError
 from devsetup.system.package_manager_detector import get_package_manager
 from devsetup.system.package_managers.base import PackageManagerError
 from devsetup.utils.logger import (
-    info, error, success, warn, check, skip, install, fail, debug, version_log,
+    info, error, success, warn, check, skip, install, fail,
+    debug, version_log, blocked as log_blocked, dep_order,
 )
 
-# Registry: tool name → installer class
+# ── Registry ──────────────────────────────────────────────────────────────────
+
 _REGISTRY: Dict[str, Type[BaseInstaller]] = {
     "git":    GitInstaller,
     "node":   NodeInstaller,
@@ -68,35 +89,15 @@ _REGISTRY: Dict[str, Type[BaseInstaller]] = {
 }
 
 
-import re as _re
-
-# ── Version helpers ────────────────────────────────────────────────────────────
+# ── Version helpers ───────────────────────────────────────────────────────────
 
 def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
     """
     Safely retrieve the installed version from an installer.
 
-    Wraps installer.version() in a try/except so that any crash,
-    timeout, or unexpected output does not propagate — it simply
-    returns None (Phase 13 safety).
-
-    Validation (Issue 6 fix):
-      Instead of checking against a hardcoded string blacklist
-      ("not installed", "unknown", ""), any string that does not
-      contain at least one digit is treated as a non-version and
-      returns None. This correctly rejects future sentinel strings
-      such as "N/A", "not found", and "none" without requiring an
-      ever-growing blacklist.
-
-    Parameters
-    ----------
-    installer : BaseInstaller
-    tool_name : str
-        Used only for debug logging.
-
-    Returns
-    -------
-    str | None
+    Any exception, timeout, or non-version string returns None.
+    A 'version string' is defined as any string containing at least
+    one digit (rejects 'not installed', 'unknown', 'N/A', etc.).
     """
     try:
         ver = installer.version()
@@ -110,7 +111,7 @@ def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
         return None
 
 
-# ── Registry helpers ───────────────────────────────────────────────────────────
+# ── Registry helpers ──────────────────────────────────────────────────────────
 
 def is_registered(tool_name: str) -> bool:
     """Return True if tool_name exists in the installer registry."""
@@ -134,27 +135,24 @@ def get_installer(tool_name: str) -> BaseInstaller:
     return _REGISTRY[tool_name]()
 
 
-# ── Core install engine ────────────────────────────────────────────────────────
+# ── Core install engine ───────────────────────────────────────────────────────
 
 def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
     """
     Detect and, if necessary, install a single tool.
 
-    Pipeline (v1.3):
+    Pipeline:
         check → [skip | install] → version verification → result
 
     Parameters
     ----------
     tool_name : str
-        Registered tool name.
     force : bool
-        If True, reinstall even if the tool is already present.
+        If True, reinstall even if already present.
 
     Returns
     -------
     InstallerResult
-        Typed result with status, exit code, message, error category,
-        and confirmed version string.
     """
     installer = get_installer(tool_name)
 
@@ -178,13 +176,12 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
 
     # ── Skip path ──────────────────────────────────────────────────────────
     if not force and already_installed:
-        # Phase 11 — show version even for skipped tools
         ver = _get_version(installer, tool_name)
         ver_display = ver or "unknown"
         skip_msg = f"{tool_name} already installed ({ver_display})"
         skip(skip_msg)
-        version_log(ver_display)                       # Phase 5
-        return InstallerResult.skip(tool_name, skip_msg, version=ver)  # Phase 6
+        version_log(ver_display)
+        return InstallerResult.skip(tool_name, skip_msg, version=ver)
 
     if force and already_installed:
         warn(f"--force enabled. Reinstalling {tool_name}.")
@@ -220,9 +217,6 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
         )
 
     except UnsupportedOSError as exc:
-        # Precise catch for unsupported OS — no string matching required.
-        # UnsupportedOSError is raised by get_os() in os_detector.py and
-        # may be re-raised by installer modules that call it internally.
         exit_code = ExitCode.UNSUPPORTED_OS
         category  = ErrorCategory.OS_NOT_SUPPORTED
         msg = (
@@ -235,7 +229,6 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
         )
 
     except RuntimeError as exc:
-        # Generic RuntimeError from installer modules (not OS-related).
         exit_code = ExitCode.INSTALLATION_FAILURE
         category  = ErrorCategory.INSTALLER_FAILURE
         msg = (
@@ -259,9 +252,7 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
             tool_name, str(exc), exit_code=exit_code, error_category=category,
         )
 
-    # ── Post-install version verification (Phase 4, Phase 10) ─────────────
-    # Issue 1 fix: call _get_version() directly; _verify_version() was a
-    # no-op wrapper that added indirection without any distinct behaviour.
+    # ── Post-install version verification ──────────────────────────────────
     ver = _get_version(installer, tool_name)
     if ver is None:
         vfail_msg = (
@@ -280,9 +271,9 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
             error_category=ErrorCategory.VERIFICATION_FAILURE,
         )
 
-    version_log(ver)   # Phase 5
+    version_log(ver)
     ok_msg = f"{tool_name} installed successfully."
-    return InstallerResult.success(tool_name, ok_msg, version=ver)  # Phase 6
+    return InstallerResult.success(tool_name, ok_msg, version=ver)
 
 
 def install_environment(
@@ -291,23 +282,35 @@ def install_environment(
     env_name: Optional[str] = None,
 ) -> None:
     """
-    Install all tools defined in an environment config.
-    Stops the pipeline on first FAIL result and prints a summary.
+    Install all tools in an environment, respecting dependency order.
+
+    v1.4 Pipeline
+    -------------
+    1. Detect OS and package manager
+    2. Build dependency graph from installer declarations
+    3. Validate all dependency references (Phase 7)
+    4. Topological sort → deterministic install order (Phase 5)
+    5. Log computed order (Phase 12)
+    6. Execute installers in resolved order
+       - If a tool's dependency failed/was blocked → mark BLOCKED, skip it
+       - Independent tools continue even after a failure (Phase 10)
+    7. Print summary (with Blocked section — Phase 11)
+    8. Raise RuntimeError if any failures or blocked tools exist
 
     Parameters
     ----------
-    tools : list
-        Ordered list of tool names to install.
+    tools : List[str]
     force : bool
-        If True, reinstall all tools even if already present.
     env_name : str | None
-        Human-readable environment name shown in the summary header.
 
     Raises
     ------
+    DependencyError
+        If dependency validation or cycle detection fails.
     RuntimeError
-        If any tool installation fails (after summary is printed).
+        If any tool installation failed or was blocked.
     """
+    # ── 1. OS / PM detection ───────────────────────────────────────────────
     try:
         current_os = get_os()
         current_pm = get_package_manager()
@@ -320,25 +323,69 @@ def install_environment(
     if force:
         warn("--force enabled. All tools will be reinstalled.")
 
-    summary = InstallSummary(env_name=env_name)
+    # ── 2–4. Dependency resolution (Phases 4–6) ────────────────────────────
+    dep_order("Resolving dependencies...")
+    try:
+        graph = build_graph(tools, _REGISTRY)
+        ordered_tools = resolve(tools, _REGISTRY)
+    except DependencyError as exc:
+        error(str(exc))
+        raise
 
-    total = len(tools)
-    for index, tool_name in enumerate(tools, start=1):
+    # ── 5. Log computed install order (Phase 12) ───────────────────────────
+    if ordered_tools:
+        dep_order("Computed install order:")
+        for i, t in enumerate(ordered_tools, 1):
+            deps = graph.get(t, [])
+            dep_hint = f"  (needs: {', '.join(deps)})" if deps else ""
+            dep_order(f"  {i}. {t}{dep_hint}")
+    else:
+        dep_order("No tools to install.")
+
+    # ── 6. Execute in resolved order (Phases 8–10) ────────────────────────
+    summary = InstallSummary(env_name=env_name)
+    failed_or_blocked: Set[str] = set()
+    total = len(ordered_tools)
+
+    for index, tool_name in enumerate(ordered_tools, start=1):
         info(f"[{index}/{total}] Installing {tool_name} ({current_os} / {current_pm})")
+
+        # Check if any dependency failed or was blocked (Phase 10)
+        blocking_dep = get_blocked(tool_name, graph, failed_or_blocked)
+        if blocking_dep is not None:
+            block_result = InstallerResult.block(tool_name, blocking_dep)
+            summary.record(block_result)
+            failed_or_blocked.add(tool_name)
+            log_blocked(
+                f"{tool_name} — dependency '{blocking_dep}' failed "
+                f"| exit_code={ExitCode.DEPENDENCY_BLOCKED} "
+                f"| category={ErrorCategory.DEPENDENCY_BLOCKED}"
+            )
+            continue  # Don't stop; independent tools continue
+
         result = install_tool(tool_name, force=force)
         summary.record(result)
 
-        if result.status == InstallerStatus.FAIL:
-            break  # Stop pipeline on failure
+        if result.failed:
+            failed_or_blocked.add(tool_name)
+            # Do NOT break — let independent tools run (v1.4 behaviour)
 
+    # ── 7. Print summary (Phase 11) ────────────────────────────────────────
     _print_summary(summary)
 
-    if summary.has_failure:
-        fr = summary.failed_result
+    # ── 8. Raise if anything went wrong ───────────────────────────────────
+    if summary.has_failure or summary.has_blocked:
+        parts = []
+        if summary.has_failure:
+            fr = summary.failed_result
+            parts.append(
+                f"{fr.installer_id} failed "
+                f"(exit_code={fr.exit_code}, category={fr.error_category})"
+            )
+        if summary.has_blocked:
+            parts.append(f"{len(summary.blocked)} tool(s) blocked: {', '.join(summary.blocked)}")
         raise RuntimeError(
-            f"Installation stopped: {fr.installer_id} failed "
-            f"(exit_code={fr.exit_code}, "
-            f"category={fr.error_category})."
+            "Installation incomplete: " + "; ".join(parts) + "."
         )
 
     success("Environment setup complete.")
@@ -348,8 +395,15 @@ def _print_summary(summary: InstallSummary) -> None:
     """
     Print the installation report.
 
-    v1.3 — version strings are displayed next to each tool name (Phase 7):
+    v1.3 — version strings displayed next to each tool name.
+    v1.4 — Blocked section added (Phase 11).
 
+    Format
+    ------
+        Environment: Web
+
+        Installation Summary
+        --------------------
         Installed (2):
           git (2.43.0)
           node (20.11.1)
@@ -359,6 +413,9 @@ def _print_summary(summary: InstallSummary) -> None:
 
         Failed:
           python  (exit_code=5, category=VERIFICATION_FAILURE)
+
+        Blocked (1):
+          vscode  (blocked by: node)
     """
     info("")
 
@@ -369,13 +426,13 @@ def _print_summary(summary: InstallSummary) -> None:
     info("Installation Summary")
     info("--------------------")
 
-    # ── Installed ──────────────────────────────────────────────────────────
+    # Installed
     n_installed = len(summary.installed)
     if n_installed:
         info(f"Installed ({n_installed}):")
         for t in summary.installed:
-            result = summary.result_map.get(t)
-            ver_suffix = f" ({result.version})" if result and result.version else ""
+            res = summary.result_map.get(t)
+            ver_suffix = f" ({res.version})" if res and res.version else ""
             info(f"  {t}{ver_suffix}")
     else:
         info("Installed:")
@@ -383,13 +440,13 @@ def _print_summary(summary: InstallSummary) -> None:
 
     info("")
 
-    # ── Skipped ────────────────────────────────────────────────────────────
+    # Skipped
     n_skipped = len(summary.skipped)
     if n_skipped:
         info(f"Skipped ({n_skipped}):")
         for t in summary.skipped:
-            result = summary.result_map.get(t)
-            ver_suffix = f" ({result.version})" if result and result.version else ""
+            res = summary.result_map.get(t)
+            ver_suffix = f" ({res.version})" if res and res.version else ""
             info(f"  {t}{ver_suffix}")
     else:
         info("Skipped:")
@@ -397,7 +454,7 @@ def _print_summary(summary: InstallSummary) -> None:
 
     info("")
 
-    # ── Failed ─────────────────────────────────────────────────────────────
+    # Failed
     if summary.failed_result:
         fr = summary.failed_result
         info("Failed:")
@@ -411,14 +468,32 @@ def _print_summary(summary: InstallSummary) -> None:
 
     info("")
 
+    # Blocked (v1.4 — Phase 11)
+    blocked_list = summary.blocked
+    if blocked_list:
+        info(f"Blocked ({len(blocked_list)}):")
+        for t in blocked_list:
+            res = summary.result_map.get(t)
+            reason = ""
+            if res and res.message:
+                # Extract "blocking dep" from message for compact display
+                import re
+                m = re.search(r"dependency '([^']+)'", res.message)
+                reason = f"  (blocked by: {m.group(1)})" if m else ""
+            info(f"  {t}{reason}")
+    else:
+        info("Blocked:")
+        info("  none")
+
+    info("")
+
+
+# ── Utility functions ─────────────────────────────────────────────────────────
 
 def list_tools() -> Dict[str, str]:
     """
     Return a dict of tool → version for all registered tools.
-
-    Issue 3 fix: uses _get_version() instead of calling installer.version()
-    directly, so TimeoutExpired, CalledProcessError, and other subprocess
-    exceptions cannot crash 'devsetup list'.
+    Uses _get_version() so exceptions cannot crash the command.
     """
     result = {}
     for name, cls in _REGISTRY.items():
@@ -430,17 +505,16 @@ def list_tools() -> Dict[str, str]:
 
 def tool_info(tool_name: str) -> Dict[str, str]:
     """
-    Return detection status and version for a single tool.
-
-    Issue 3 fix: uses _get_version() instead of calling installer.version()
-    directly, so TimeoutExpired, CalledProcessError, and other subprocess
-    exceptions cannot crash 'devsetup info <tool>'.
+    Return detection status, version, and dependencies for a single tool.
+    Uses _get_version() so exceptions cannot crash the command.
     """
     installer = get_installer(tool_name)
-    detected = installer.detect()
-    ver = _get_version(installer, tool_name) if detected else None
+    detected  = installer.detect()
+    ver       = _get_version(installer, tool_name) if detected else None
+    deps      = getattr(installer.__class__, "dependencies", [])
     return {
-        "tool":      tool_name,
-        "installed": str(detected),
-        "version":   ver if ver is not None else "not installed",
+        "tool":         tool_name,
+        "installed":    str(detected),
+        "version":      ver if ver is not None else "not installed",
+        "dependencies": ", ".join(deps) if deps else "none",
     }
