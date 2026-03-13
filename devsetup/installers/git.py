@@ -17,6 +17,7 @@ Patch (v1.3.2 — Issue 2):
 """
 
 import subprocess
+from typing import List
 
 from devsetup.installers.base import BaseInstaller
 from devsetup.system.command_detector import command_exists, command_runs
@@ -26,6 +27,7 @@ from devsetup.utils.version_parser import parse_version
 
 
 class GitInstaller(BaseInstaller):
+    dependencies: List[str] = []  # no prerequisites
     tool_name = "git"
 
     def detect(self) -> bool:
