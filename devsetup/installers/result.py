@@ -21,6 +21,13 @@ v1.4 additions (Dependency Ordering):
   - InstallSummary.total_run      — now includes blocked count
   - InstallSummary.record()       — handles BLOCKED status bucket
 
+v1.4.1 fixes:
+  - InstallSummary now records ALL failures, not just the last one.
+    _failed_ids replaces the single failed_result stored field.
+    failed_result property returns the first failure (backward-compatible).
+    failed_results property returns all failures in execution order.
+    total_run counts all failures, not just one.
+
 Exit Code Contract
 ------------------
   0  → success
@@ -212,20 +219,24 @@ class InstallSummary:
     """
     Accumulates installer results and produces the final installation report.
 
-    Design (single source of truth — v1.3.2):
+    Design (single source of truth — v1.3.2, updated v1.4.1):
       _records     : Dict[str, InstallerResult]  — authoritative store
       _ordered_ids : List[str]                   — SUCCESS/SKIP insertion order
       _blocked_ids : List[str]                   — BLOCKED insertion order (v1.4)
-      failed_result: Optional[InstallerResult]   — fast access to the failure
+      _failed_ids  : List[str]                   — FAIL insertion order (v1.4.1)
+                     Replaces the single failed_result stored field so that ALL
+                     failures across the pipeline are retained.
 
     Computed properties:
-      installed  → SUCCESS tools in order
-      skipped    → SKIP tools in order
-      blocked    → BLOCKED tools in order (v1.4)
-      result_map → read-only view of _records
+      installed      → SUCCESS tools in order
+      skipped        → SKIP tools in order
+      blocked        → BLOCKED tools in order (v1.4)
+      failed_result  → first FAIL result, or None  (backward-compatible)
+      failed_results → all FAIL results in order   (v1.4.1)
+      result_map     → read-only view of _records
 
     Backward-compatible constructor accepts installed=, skipped=,
-    failed_result=, result_map= keyword arguments.
+    failed_result=, result_map=, blocked= keyword arguments.
     """
 
     def __init__(
@@ -237,10 +248,10 @@ class InstallSummary:
         result_map: Optional[Dict[str, InstallerResult]] = None,
         blocked: Optional[List[str]] = None,
     ) -> None:
-        self.env_name      = env_name
-        self.failed_result = failed_result
+        self.env_name = env_name
         self._ordered_ids: List[str] = []
         self._blocked_ids: List[str] = []
+        self._failed_ids:  List[str] = []   # v1.4.1 — all failures, in order
         self._records: Dict[str, InstallerResult] = {}
 
         if result_map:
@@ -261,8 +272,13 @@ class InstallSummary:
                 self._records[tool_id] = InstallerResult.block(tool_id, "unknown")
             self._blocked_ids.append(tool_id)
 
-        if failed_result and failed_result.installer_id not in self._records:
-            self._records[failed_result.installer_id] = failed_result
+        # Seed from the backward-compatible failed_result= kwarg
+        if failed_result:
+            tid = failed_result.installer_id
+            if tid not in self._records:
+                self._records[tid] = failed_result
+            if tid not in self._failed_ids:
+                self._failed_ids.append(tid)
 
     # ── Computed properties ───────────────────────────────────────────────────
 
@@ -290,6 +306,24 @@ class InstallSummary:
         return list(self._blocked_ids)
 
     @property
+    def failed_result(self) -> Optional[InstallerResult]:
+        """
+        First FAIL result recorded, or None.
+
+        Backward-compatible read-only property. Callers that only care
+        whether any failure occurred should use has_failure; callers that
+        need every failure should use failed_results.
+        """
+        if not self._failed_ids:
+            return None
+        return self._records.get(self._failed_ids[0])
+
+    @property
+    def failed_results(self) -> List[InstallerResult]:
+        """All FAIL results in execution order (v1.4.1)."""
+        return [self._records[t] for t in self._failed_ids if t in self._records]
+
+    @property
     def result_map(self) -> Dict[str, InstallerResult]:
         """Read-only view of all results keyed by installer_id."""
         return self._records
@@ -301,18 +335,18 @@ class InstallSummary:
         Record an installer result into the correct bucket.
 
         Duplicate tool IDs are silently ignored (Phase 6 guard).
+        All FAIL results are retained in _failed_ids order (v1.4.1).
         """
         tool = result.installer_id
 
+        # Deduplication guard — all results live in _records
         if tool in self._records:
-            return
-        if self.failed_result and tool == self.failed_result.installer_id:
             return
 
         self._records[tool] = result
 
         if result.status == InstallerStatus.FAIL:
-            self.failed_result = result
+            self._failed_ids.append(tool)   # append, never overwrite
         elif result.status == InstallerStatus.BLOCKED:
             self._blocked_ids.append(tool)
         else:
@@ -323,7 +357,7 @@ class InstallSummary:
     @property
     def has_failure(self) -> bool:
         """True when at least one installer failed."""
-        return self.failed_result is not None
+        return len(self._failed_ids) > 0
 
     @property
     def has_blocked(self) -> bool:
@@ -332,10 +366,10 @@ class InstallSummary:
 
     @property
     def total_run(self) -> int:
-        """Total number of results recorded (includes blocked)."""
+        """Total number of results recorded (includes all failures and blocked)."""
         return (
             len(self.installed)
             + len(self.skipped)
-            + len(self.blocked)
-            + (1 if self.failed_result else 0)
+            + len(self._failed_ids)   # all failures, not just one
+            + len(self._blocked_ids)
         )
