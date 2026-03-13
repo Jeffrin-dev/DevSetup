@@ -68,5 +68,6 @@ def parse_version(raw_output: str) -> str:
     if match:
         return match.group(1)
 
-    # Fallback: return the first line stripped if no pattern matched
-    return first_line.strip() or "unknown"
+    # No version-like pattern found — never leak raw command output
+    # (e.g. "error: command failed") as a version string.
+    return "unknown"
