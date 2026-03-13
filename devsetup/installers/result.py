@@ -7,19 +7,22 @@ v1.3 additions:
   - InstallerResult.version       — stores the verified installed version
   - ExitCode.VERIFICATION_FAILURE — version command failed post-install
   - ErrorCategory.VERIFICATION_FAILURE
-  - InstallSummary.result_map     — maps tool_id → InstallerResult for
-                                    version display in the summary (Phase 7)
 
-Replaces loose string return values with a typed object that carries:
-  - installer_id    : which tool was being processed
-  - status          : SUCCESS | SKIP | FAIL
-  - exit_code       : numeric code from the global ExitCode contract
-  - message         : human-readable description
-  - error_category  : optional error classification (None on success/skip)
-  - version         : confirmed installed version string, or None
+Patch (v1.3.2 — Issue 5):
+  - InstallSummary refactored so result_map is the single source of
+    truth. Previously installed and skipped were List[str] fields that
+    existed in parallel to result_map, creating two representations of
+    the same data that could drift if record() was bypassed.
 
-Also provides InstallSummary — the accumulator that collects every
-installer result during install_environment() and builds the final report.
+    New design:
+      - _ordered_ids : List[str]  — private, records insertion order
+      - _records     : Dict[str, InstallerResult]  — single source
+      - installed    : property — computed from _records/_ordered_ids
+      - skipped      : property — computed from _records/_ordered_ids
+      - result_map   : property — read-only view of _records
+
+    __init__ accepts the same keyword arguments as before for backward
+    compatibility with direct construction in tests and callers.
 
 Exit Code Contract
 ------------------
@@ -42,7 +45,7 @@ Error Categories
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
@@ -62,14 +65,13 @@ class ExitCode:
     """
     Global exit code contract.
     All installer results and CLI exit codes use these values.
-    Unknown codes are treated as fatal errors by the engine.
     """
     SUCCESS                 = 0
     INSTALLATION_FAILURE    = 1
     DETECTION_ERROR         = 2
     UNSUPPORTED_OS          = 3
     PACKAGE_MANAGER_FAILURE = 4
-    VERIFICATION_FAILURE    = 5   # v1.3 — version command failed post-install
+    VERIFICATION_FAILURE    = 5   # v1.3
 
 
 # ── Error categories ──────────────────────────────────────────────────────────
@@ -115,9 +117,7 @@ class InstallerResult:
     exit_code:      int
     message:        str
     error_category: Optional[str] = None
-    version:        Optional[str] = None   # v1.3
-
-    # ── Named constructors ────────────────────────────────────────────────────
+    version:        Optional[str] = None
 
     @classmethod
     def success(
@@ -168,8 +168,6 @@ class InstallerResult:
             error_category=error_category,
         )
 
-    # ── Convenience properties ────────────────────────────────────────────────
-
     @property
     def succeeded(self) -> bool:
         """True for SUCCESS and SKIP — anything that does not stop the pipeline."""
@@ -183,42 +181,99 @@ class InstallerResult:
 
 # ── Install Summary ───────────────────────────────────────────────────────────
 
-@dataclass
 class InstallSummary:
     """
-    Accumulates installer results as the engine runs and produces the
-    final installation report.
+    Accumulates installer results and produces the final installation report.
 
-    Collected by the engine during install_environment(); printed after
-    all installers have run (or the pipeline has stopped on a FAIL).
+    Design (v1.3.2 — single source of truth):
+      _records     : Dict[str, InstallerResult]  — every result, keyed by tool ID
+      _ordered_ids : List[str]                   — insertion order for SUCCESS/SKIP
+      failed_result: Optional[InstallerResult]   — fast access to the single failure
 
-    Attributes
-    ----------
-    env_name : str | None
-        Human-readable environment name (e.g. "Web"), or None for
-        single-tool installs.
-    installed : list[str]
-        Installer IDs that completed with SUCCESS, in execution order.
-    skipped : list[str]
-        Installer IDs that were SKIP-ped, in execution order.
-    failed_result : InstallerResult | None
-        The single FAIL result that stopped the pipeline, or None.
-    result_map : dict[str, InstallerResult]
-        Full result object keyed by installer_id — used by the summary
-        printer to look up version strings (v1.3, Phase 7).
+    installed and skipped are computed properties derived from _records and
+    _ordered_ids. There is no separate list that could drift out of sync.
+
+    result_map is a read-only property returning _records directly, preserving
+    the v1.3 API used by _print_summary() and tests.
+
+    Backward-compatible constructor:
+      InstallSummary() — empty
+      InstallSummary(env_name="Web")
+      InstallSummary(installed=["git"], result_map={"git": result})
+      InstallSummary(installed=["git"], skipped=["node"])
+      InstallSummary(failed_result=result)
+    When installed/skipped lists are passed without a matching result_map
+    entry, synthetic InstallerResult objects are created so that
+    _records is always the authoritative store.
     """
-    env_name:      Optional[str]             = None
-    installed:     List[str]                 = field(default_factory=list)
-    skipped:       List[str]                 = field(default_factory=list)
-    failed_result: Optional[InstallerResult] = field(default=None)
-    result_map:    Dict[str, InstallerResult] = field(default_factory=dict)   # v1.3
+
+    def __init__(
+        self,
+        env_name: Optional[str] = None,
+        installed: Optional[List[str]] = None,
+        skipped: Optional[List[str]] = None,
+        failed_result: Optional[InstallerResult] = None,
+        result_map: Optional[Dict[str, InstallerResult]] = None,
+    ) -> None:
+        self.env_name      = env_name
+        self.failed_result = failed_result
+        self._ordered_ids: List[str] = []
+        self._records: Dict[str, InstallerResult] = {}
+
+        # Seed _records from result_map if provided
+        if result_map:
+            self._records.update(result_map)
+
+        # Populate ordering from installed list; create synthetic result if absent
+        for tool_id in (installed or []):
+            if tool_id not in self._records:
+                self._records[tool_id] = InstallerResult.success(tool_id)
+            self._ordered_ids.append(tool_id)
+
+        # Populate ordering from skipped list; create synthetic result if absent
+        for tool_id in (skipped or []):
+            if tool_id not in self._records:
+                self._records[tool_id] = InstallerResult.skip(tool_id)
+            self._ordered_ids.append(tool_id)
+
+        # Ensure failed result is in _records
+        if failed_result and failed_result.installer_id not in self._records:
+            self._records[failed_result.installer_id] = failed_result
+
+    # ── Computed properties (single source of truth) ──────────────────────────
+
+    @property
+    def installed(self) -> List[str]:
+        """Installer IDs with SUCCESS status, in execution order."""
+        return [
+            t for t in self._ordered_ids
+            if self._records.get(t, None) is not None
+            and self._records[t].status == InstallerStatus.SUCCESS
+        ]
+
+    @property
+    def skipped(self) -> List[str]:
+        """Installer IDs with SKIP status, in execution order."""
+        return [
+            t for t in self._ordered_ids
+            if self._records.get(t, None) is not None
+            and self._records[t].status == InstallerStatus.SKIP
+        ]
+
+    @property
+    def result_map(self) -> Dict[str, InstallerResult]:
+        """Read-only view of all results keyed by installer_id."""
+        return self._records
+
+    # ── Mutation ──────────────────────────────────────────────────────────────
 
     def record(self, result: InstallerResult) -> None:
         """
-        Classify a result and append it to the correct bucket.
+        Record an installer result.
 
-        Each installer ID is recorded exactly once.  Duplicate calls for
-        the same tool ID are silently ignored (Phase 6 guard).
+        Each installer ID is accepted exactly once — duplicate calls are
+        silently ignored. _records is updated atomically so installed and
+        skipped properties always reflect the true state.
 
         Parameters
         ----------
@@ -226,24 +281,21 @@ class InstallSummary:
         """
         tool = result.installer_id
 
-        # Phase 6: guard against duplicate entries
-        already_seen = (
-            set(self.installed)
-            | set(self.skipped)
-            | ({self.failed_result.installer_id} if self.failed_result else set())
-        )
-        if tool in already_seen:
+        # Duplicate guard — _records is the single source of truth
+        if tool in self._records:
+            return
+        # Also guard against a tool that previously failed
+        if self.failed_result and tool == self.failed_result.installer_id:
             return
 
-        # v1.3: store full result for version lookup in summary printer
-        self.result_map[tool] = result
+        self._records[tool] = result
 
-        if result.status == InstallerStatus.SUCCESS:
-            self.installed.append(tool)
-        elif result.status == InstallerStatus.SKIP:
-            self.skipped.append(tool)
-        elif result.status == InstallerStatus.FAIL:
+        if result.status == InstallerStatus.FAIL:
             self.failed_result = result
+        else:
+            self._ordered_ids.append(tool)
+
+    # ── Summary properties ────────────────────────────────────────────────────
 
     @property
     def has_failure(self) -> bool:
