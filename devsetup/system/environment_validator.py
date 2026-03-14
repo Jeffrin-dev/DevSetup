@@ -64,6 +64,39 @@ class EnvironmentValidationError(ValueError):
     pass
 
 
+# ── Public validation functions ───────────────────────────────────────────────
+
+def validate_structure(data: Any, source: str) -> None:
+    """
+    Verify the parsed JSON root value is a dict (Phase 9 / Rule 6).
+
+    Must be called by the loader before validate(), because validate()
+    accepts Dict[str, Any] and would raise an AttributeError rather than
+    a clean EnvironmentValidationError if passed a list or scalar.
+
+    Keeping this check here (not inline in the loader) preserves the
+    principle that all structural validation lives in the validator module.
+
+    Parameters
+    ----------
+    data : Any
+        The raw value returned by json.load().
+    source : str
+        Filename for error messages (e.g. 'web.json').
+
+    Raises
+    ------
+    EnvironmentValidationError
+        If the root JSON value is not a dict.
+    """
+    if not isinstance(data, dict):
+        raise EnvironmentValidationError(
+            f"CONFIG ERROR: {source} — root JSON value must be an object "
+            f"(got {type(data).__name__}). "
+            f"Environment configs must be a JSON object, not an array or scalar."
+        )
+
+
 # ── Public helpers ────────────────────────────────────────────────────────────
 
 def get_tools_list(data: Dict[str, Any]) -> Optional[List]:
