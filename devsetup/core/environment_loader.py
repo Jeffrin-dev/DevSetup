@@ -23,6 +23,7 @@ from typing import Any, Dict, List
 from devsetup.utils.logger import error, debug, valid as log_valid, invalid as log_invalid
 from devsetup.system.environment_validator import (
     validate,
+    validate_structure,
     validate_no_duplicates,
     EnvironmentValidationError,
 )
@@ -122,8 +123,10 @@ def list_available() -> List[str]:
             log_invalid(f"✗ {filename} — invalid JSON: {exc}")
             continue
 
-        if not isinstance(data, dict):
-            log_invalid(f"✗ {filename} — root JSON value must be an object, not {type(data).__name__}")
+        try:
+            validate_structure(data, filename)
+        except EnvironmentValidationError as exc:
+            log_invalid(f"✗ {filename} — {exc}")
             continue
 
         env_id = data.get("id", os.path.splitext(filename)[0])
