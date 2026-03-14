@@ -17,6 +17,8 @@ Log levels supported:
   [VERSION] — confirmed installed version (v1.3)
   [BLOCKED] — tool skipped because a dependency failed (v1.4, stderr)
   [DEPS]    — dependency resolution progress messages (v1.4, stdout)
+  [VALID]   — environment config passed validation (v1.5, stdout)
+  [INVALID] — environment config failed validation (v1.5, stderr)
 
 All messages include a timestamp for debugging.
 """
@@ -117,3 +119,27 @@ def dep_order(message: str) -> None:
         [HH:MM:SS] [DEPS]    Computed install order: git → node → vscode
     """
     print(f"[{_timestamp()}] [DEPS]    {message}")
+
+
+def valid(message: str) -> None:
+    """
+    Print a validation-passed message to stdout (v1.5).
+
+    Used during environment loading to confirm a config passed all checks.
+
+    Example output:
+        [HH:MM:SS] [VALID]   ✓ web
+    """
+    print(f"[{_timestamp()}] [VALID]   {message}")
+
+
+def invalid(message: str) -> None:
+    """
+    Print a validation-failed message to stderr (v1.5).
+
+    Used during environment loading when a config fails any check.
+
+    Example output:
+        [HH:MM:SS] [INVALID] ✗ web — duplicate tool 'git'
+    """
+    print(f"[{_timestamp()}] [INVALID] {message}", file=sys.stderr)
