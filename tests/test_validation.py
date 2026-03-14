@@ -29,6 +29,7 @@ from devsetup.system.environment_validator import (
     EnvironmentValidationError,
     validate,
     validate_no_duplicates,
+    validate_structure,
     get_tools_list,
 )
 from devsetup.core.environment_loader import load, list_available
@@ -350,7 +351,14 @@ class TestJSONStructure(unittest.TestCase):
         validate(data, "t.json")   # must not raise
 
     def test_json_array_at_root_raises(self):
-        """Root must be a JSON object, not an array."""
+        """Root must be a JSON object, not an array — caught by validate_structure."""
+        from devsetup.system.environment_validator import validate_structure
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate_structure(["git", "node"], "array.json")
+        self.assertIn("object", str(ctx.exception).lower())
+
+    def test_json_array_skipped_in_list_available(self):
+        """list_available() must skip configs whose root is a JSON array."""
         with tempfile.TemporaryDirectory() as tmp:
             bad = os.path.join(tmp, "array.json")
             with open(bad, "w") as f:
@@ -481,6 +489,48 @@ class TestValidationLogging(unittest.TestCase):
         self.assertIn("goodenv", envs)
         self.assertIn("[VALID]",   stdout)
         self.assertIn("[INVALID]", stderr)
+
+
+# ── validate_structure — root type check (Rule 6 fix) ────────────────────────
+
+class TestValidateStructure(unittest.TestCase):
+    """
+    validate_structure() must be the single place root-type checking lives.
+    Rule 6 — validation logic belongs in the validator, not the loader.
+    """
+
+    def test_dict_passes(self):
+        validate_structure({"id": "web"}, "web.json")   # must not raise
+
+    def test_list_raises(self):
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate_structure(["git", "node"], "bad.json")
+        self.assertIn("object", str(ctx.exception).lower())
+
+    def test_string_raises(self):
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate_structure("web", "bad.json")
+        self.assertIn("object", str(ctx.exception).lower())
+
+    def test_none_raises(self):
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate_structure(None, "bad.json")
+        self.assertIn("object", str(ctx.exception).lower())
+
+    def test_int_raises(self):
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate_structure(42, "bad.json")
+        self.assertIn("object", str(ctx.exception).lower())
+
+    def test_error_names_source(self):
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate_structure([], "myenv.json")
+        self.assertIn("myenv.json", str(ctx.exception))
+
+    def test_error_names_actual_type(self):
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate_structure([], "bad.json")
+        self.assertIn("list", str(ctx.exception))
 
 
 # ── get_tools_list helper ─────────────────────────────────────────────────────
