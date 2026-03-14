@@ -14,10 +14,17 @@ Must NOT contain:
   - Environment loading
   - Business logic of any kind
 
-v1.4.1 fix:
-  - cmd_install now catches DependencyError explicitly before the broad
-    except Exception handler, so cycle and config errors produce a clean
-    [ERROR] message instead of the generic "Environment installation failed:" prefix.
+v1.4.1:
+  - DependencyError caught explicitly in cmd_install.
+
+v1.6 (Environment Info Command):
+  - info command extended: accepts a tool name OR environment ID.
+  - Auto-dispatch: registered tool → tool info; otherwise → env info.
+  - --env flag forces environment lookup (resolves ambiguity when a name
+    is both a registered tool and an environment ID, e.g. 'python').
+  - --summary flag: compact one-line tool list output (Phase 7).
+  - --verbose flag: includes per-tool dependency info (Phase 9).
+  - Exit codes: 0 = success, 1 = not found / invalid, 2 = unexpected error.
 """
 
 import argparse
@@ -30,6 +37,7 @@ from devsetup.installers import manager as installer_manager
 from devsetup.core import environment_loader
 from devsetup.core.plugin_loader import load_plugins
 from devsetup.installers.dependency_resolver import DependencyError
+from devsetup.cli.env_info import print_env_info, print_env_summary
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,10 +51,14 @@ def build_parser() -> argparse.ArgumentParser:
             "  install <environment>    Install a development environment\n"
             "  install --tool <n>       Install a single tool\n"
             "  list                     List available environments\n"
-            "  info <tool>              Show details for a specific tool\n\n"
+            "  info <tool>              Show details for a specific tool\n"
+            "  info <environment>       Show details for an environment\n"
+            "  info <name> --env        Force environment lookup\n\n"
             "Options:\n"
             "  --force                  Reinstall tools even if already installed\n"
             "  --debug                  Enable verbose diagnostic output\n"
+            "  --summary                Show compact tool list (info command)\n"
+            "  --verbose                Show dependency info (info command)\n"
             "  --version                Show CLI version\n"
             "  --help                   Show this help message\n\n"
             "Examples:\n"
@@ -55,7 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
             "  devsetup install web --debug\n"
             "  devsetup install --tool git\n"
             "  devsetup list\n"
-            "  devsetup info node\n"
+            "  devsetup info git\n"
+            "  devsetup info web\n"
+            "  devsetup info python --env\n"
+            "  devsetup info web --summary\n"
+            "  devsetup info web --verbose\n"
         ),
     )
 
@@ -105,16 +121,44 @@ def build_parser() -> argparse.ArgumentParser:
     # ── devsetup info ─────────────────────────────────────────────────────────
     info_parser = subparsers.add_parser(
         "info",
-        help="Show installation details for a specific tool.",
+        help=(
+            "Show details for a tool or environment. "
+            "If the name matches a registered tool, tool info is shown. "
+            "Otherwise, environment info is shown. "
+            "Use --env to force environment lookup."
+        ),
     )
-    info_parser.add_argument("tool", help="Tool name (e.g. git, node, vscode).")
+    info_parser.add_argument(
+        "target",
+        help="Tool name (e.g. git) or environment ID (e.g. web).",
+    )
+    info_parser.add_argument(
+        "--env",
+        action="store_true",
+        default=False,
+        help=(
+            "Force environment lookup. Useful when a name is both a tool "
+            "and an environment ID (e.g. 'python')."
+        ),
+    )
+    info_parser.add_argument(
+        "--summary",
+        action="store_true",
+        default=False,
+        help="Show a compact one-line tool list (environment mode only).",
+    )
+    info_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Show per-tool dependency information (environment mode only).",
+    )
 
     return parser
 
 
 def cmd_install(args: argparse.Namespace) -> int:
     """Handle: devsetup install"""
-    # Activate debug mode if --debug flag is set
     if getattr(args, "debug", False):
         os.environ["DEVSETUP_DEBUG"] = "1"
 
@@ -149,10 +193,6 @@ def cmd_install(args: argparse.Namespace) -> int:
                 env["installers"], force=force, env_name=env["name"]
             )
         except DependencyError as exc:
-            # Dependency cycle or missing reference — report cleanly then stop.
-            # DependencyError is a ValueError so without this explicit catch it
-            # would fall through to the broad except Exception handler and lose
-            # the structured message.
             error(str(exc))
             return 1
         except RuntimeError as exc:
@@ -184,18 +224,86 @@ def cmd_list(_args: argparse.Namespace) -> int:
 
 
 def cmd_info(args: argparse.Namespace) -> int:
-    """Handle: devsetup info <tool>"""
+    """
+    Handle: devsetup info <target> [--env] [--summary] [--verbose]
+
+    Dispatch logic (v1.6):
+      1. If --env is set → always look up as environment.
+      2. If target is a registered tool AND --env is not set → show tool info.
+      3. Otherwise → try as environment ID.
+
+    This ensures backward compatibility (devsetup info git still works)
+    while supporting devsetup info web (environment) and resolving the
+    'python' ambiguity via explicit --env flag.
+
+    Exit codes (Phase 11):
+      0 → success
+      1 → not found or config invalid
+      2 → unexpected error
+    """
+    target = args.target
+    force_env = getattr(args, "env", False)
+    summary   = getattr(args, "summary", False)
+    verbose   = getattr(args, "verbose", False)
+
+    # ── Route: tool info (backward-compatible path) ───────────────────────────
+    if not force_env and installer_manager.is_registered(target):
+        return _cmd_tool_info(target)
+
+    # ── Route: environment info ───────────────────────────────────────────────
+    return _cmd_env_info(target, summary=summary, verbose=verbose)
+
+
+def _cmd_tool_info(tool_name: str) -> int:
+    """Print tool installation details (existing behaviour, unchanged)."""
     try:
-        data = installer_manager.tool_info(args.tool)
+        data = installer_manager.tool_info(tool_name)
     except KeyError as exc:
         error(str(exc))
         error("Use 'devsetup list' to see available environments.")
         return 1
+    except Exception as exc:
+        error(f"Unexpected error retrieving tool info: {exc}")
+        return 2
 
     info(f"Tool         : {data['tool']}")
     info(f"Installed    : {data['installed']}")
     info(f"Version      : {data['version']}")
     info(f"Dependencies : {data['dependencies']}")
+    return 0
+
+
+def _cmd_env_info(env_id: str, summary: bool = False, verbose: bool = False) -> int:
+    """
+    Print environment details using env_info formatter (v1.6).
+
+    Parameters
+    ----------
+    env_id : str
+        Environment identifier to look up.
+    summary : bool
+        Emit compact one-line tool list.
+    verbose : bool
+        Include per-tool dependency info in full output.
+    """
+    try:
+        env = environment_loader.load(env_id)
+    except FileNotFoundError:
+        error(f"Environment '{env_id}' not found.")
+        error("Use 'devsetup list' to see available environments.")
+        return 1
+    except ValueError as exc:
+        error(str(exc))
+        return 1
+    except Exception as exc:
+        error(f"Unexpected error loading environment '{env_id}': {exc}")
+        return 2
+
+    if summary:
+        print_env_summary(env)
+    else:
+        print_env_info(env, verbose=verbose)
+
     return 0
 
 
@@ -215,7 +323,6 @@ def main(argv=None) -> int:
     int
         Exit code (0 = success, non-zero = failure).
     """
-    # Load user plugins before any command runs (Architecture Rule 7)
     load_plugins(installer_manager._REGISTRY)
 
     parser = build_parser()
