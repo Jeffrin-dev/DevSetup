@@ -500,6 +500,27 @@ def list_tools() -> Dict[str, str]:
     return result
 
 
+def tool_dependencies(tool_name: str) -> List[str]:
+    """
+    Return the declared dependency list for a registered tool.
+
+    Read-only — never instantiates the installer or calls detect().
+    Returns an empty list if the tool has no dependencies.
+
+    Raises
+    ------
+    KeyError
+        If tool_name is not registered.
+    """
+    if tool_name not in _REGISTRY:
+        raise KeyError(
+            f"Installer '{tool_name}' not registered. "
+            f"Available installers: {list(_REGISTRY.keys())}"
+        )
+    cls = _REGISTRY[tool_name]
+    return list(getattr(cls, "dependencies", []))
+
+
 def tool_info(tool_name: str) -> Dict[str, str]:
     """
     Return detection status, version, and dependencies for a single tool.
