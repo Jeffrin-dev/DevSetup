@@ -19,6 +19,7 @@ def register(registry):
 
     class MyToolInstaller(BaseInstaller):
         tool_name = "mytool"
+        dependencies = []
 
         def detect(self):
             import shutil
