@@ -144,6 +144,7 @@ def validate(data: Dict[str, Any], source: str) -> None:
     _check_id_format(data, source, env_id)
     _check_field_types(data, source, env_id)
     _check_tools_field(data, source, env_id)
+    _check_tool_entry_types(data, source, env_id)
     _check_duplicate_tools(data, source, env_id)
     _check_installer_ids(data, source, env_id)
 
@@ -286,6 +287,31 @@ def _check_tools_field(
             f"'{field_name}' must not be empty. "
             f"Environment must define at least one tool."
         )
+
+
+def _check_tool_entry_types(
+    data: Dict[str, Any], source: str, env_id: str
+) -> None:
+    """
+    Verify every entry in the tools list is a string (TL2).
+
+    Catches non-string entries (integers, booleans, lists, dicts, None)
+    before _check_duplicate_tools and _check_installer_ids run, preventing
+    a TypeError from unhashable types and giving a precise error message.
+
+    Example invalid: tools: [123, ["git"], true]
+    """
+    tools = get_tools_list(data)
+    if not isinstance(tools, list):
+        return   # already caught by _check_tools_field
+
+    for index, tool_id in enumerate(tools):
+        if not isinstance(tool_id, str):
+            raise EnvironmentValidationError(
+                f"CONFIG ERROR: Environment '{env_id}' ({source}) — "
+                f"tools list entry at index {index} must be a string "
+                f"(installer ID), got {type(tool_id).__name__}: {tool_id!r}."
+            )
 
 
 def _check_duplicate_tools(
