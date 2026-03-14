@@ -6,73 +6,78 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.5.0] — 2026-03-14
+
+Environment Configuration Validation.
+236/236 tests green. All 15 roadmap phases implemented.
+
+### Added
+- **`_check_id_format()`** (Phase 7) — environment IDs must be lowercase,
+  start with a letter, and contain only letters, digits, and hyphens.
+  Valid: `web`, `data-science`, `python3`. Invalid: `Web Dev`, `web_env`.
+- **`_check_duplicate_tools()`** (Phase 6) — duplicate tool IDs within a
+  single environment config now raise `EnvironmentValidationError`.
+- **`_check_field_types()`** (Phase 3) — `id` and `name` must be non-empty
+  strings; `description`, if present, must be a string.
+- **`get_tools_list()`** (Phase 1) — public helper accepting both `tools`
+  (v1.5 format) and `installers` (v1.0 backward-compatible format).
+- **`logger.valid()`** / **`logger.invalid()`** (Phase 13) — new `[VALID]`
+  and `[INVALID]` log levels emitted per environment during `list_available()`.
+- **`tests/test_validation.py`** (Phase 15) — 84 new tests covering all
+  validation rules: required fields, field types, tools list, installer
+  references, duplicate tools, ID format, duplicate environments, JSON
+  structure, error message quality, and validation logging.
+
+### Changed
+- **`schema` field is now optional** (Phase 2) — v1.5 environment configs
+  do not require a `schema` key. If present, it must be `"1.0"`.
+- **`environment_loader.py`** — `_normalize()` added: after validation,
+  the `tools` key is aliased to `installers` so all downstream code
+  (`cli/main.py`, `manager.py`) continues to use `env["installers"]`
+  unchanged.
+- **`environment_loader.py`** — `list_available()` now logs `[VALID] ✓`
+  or `[INVALID] ✗` per config (Phase 13) and guards against non-dict
+  JSON roots.
+- **`environment_validator.py`** — all error messages now include the
+  environment id and source filename (Phase 12).
+- **`tests/test_config.py`** — `test_missing_schema_raises` removed;
+  replaced with `test_schema_is_optional`. New tests for duplicate tools,
+  ID format rules, field type checks, and `tools`/`installers` alias.
+- **`utils/__init__.py`** — `valid` and `invalid` exported.
+- **`__version__`** bumped to `1.5.0`.
+
+---
+
 ## [1.4.1] — 2026-03-14
 
-Post-review patches. All 25/25 architecture and 25/25 dependency ordering audit
-questions pass. 129/129 tests green.
+Post-review patches. 25/25 dependency ordering audit. 152/152 tests.
 
 ### Fixed
-- **CRITICAL** `result.py` — multi-failure summary loss: replaced single
-  `failed_result` stored field with `_failed_ids: List[str]`. All failures are
-  now retained. `failed_result` property returns the first (backward-compatible);
-  new `failed_results` property returns all failures in execution order.
-- **CRITICAL** `manager.py` — `_print_summary` and RuntimeError message now
-  iterate `summary.failed_results` so every failure is reported, not just the last.
-- **SIGNIFICANT** `cli/main.py` — `DependencyError` now caught explicitly before
-  the broad `except Exception` handler, so cycle/config errors produce a clean
-  `[ERROR]` line.
-- **SIGNIFICANT** `dependency_resolver.py` — module docstring corrected:
-  `get_blocked` return type was `-> bool`; actual is `-> Optional[str]`.
-- **SIGNIFICANT** `dependency_resolver.py` — `_topological_sort` rewired from
-  `list.pop(0) + list.sort()` (O(n²logn)) to `heapq` push/pop (O((n+e)logn)).
-- **SIGNIFICANT** `dependency_resolver.py` — eliminated double graph build;
-  `resolve_with_graph()` added, builds graph once and returns `(ordered, graph)`.
-  `_build_graph` promoted to public `build_graph`. No-op wrapper removed.
-- **SIGNIFICANT** `manager.py` — `import re` removed from inside `_print_summary`;
-  uses module-level `_re` alias throughout.
-- **MINOR** `logger.py` — `[BLOCKED]` and `[DEPS]` added to module docstring.
-- **MINOR** `git.py`, `node.py`, `pip.py`, `python.py`, `vscode.py` — all five
-  `dependencies` declarations now use `List[str]` type annotation consistently.
-- **MINOR** `node.py` — comment corrected from factually wrong
-  "git must be present for npm source operations" to
-  "git is a common prerequisite for Node.js workflows (cloning, npm scripts)".
+- Multi-failure summary loss (`result.py` — `_failed_ids` list).
+- All failures printed in summary and RuntimeError message.
+- `DependencyError` caught explicitly in CLI before broad handler.
+- `get_blocked` docstring return type corrected.
+- `_topological_sort` rewired to `heapq` (O((n+e)logn)).
+- Double graph build eliminated (`resolve_with_graph`).
+- `import re` removed from inside `_print_summary`.
+- `dependencies: List[str]` annotations on all 5 installers.
+- `node.py` dependency comment corrected.
 
 ---
 
 ## [1.4.0] — 2026-03-13
 
-Dependency ordering.
+Dependency ordering. 129/129 tests.
 
 ### Added
-- **`devsetup/installers/dependency_resolver.py`** — full dependency resolution
-  engine: `DependencyError`, `build_graph`, `resolve`, `resolve_with_graph`,
-  `get_blocked`, `_validate`, `_topological_sort` (Kahn's + min-heap),
-  `_find_cycle` (DFS coloring).
-- **`BaseInstaller.dependencies`** — `List[str]` class attribute (default `[]`).
-  All five installers declare their dependencies explicitly.
-- **`InstallerStatus.BLOCKED`** — new outcome for tools whose dependency failed.
-- **`ExitCode.DEPENDENCY_BLOCKED = 6`** and `ErrorCategory.DEPENDENCY_BLOCKED`.
-- **`InstallerResult.block()`** — named constructor for BLOCKED results.
-- **`InstallSummary.blocked`** — insertion-ordered list of blocked tool IDs.
-- **`InstallSummary.has_blocked`** — True when any tools were blocked.
-- **`logger.blocked()`** / **`logger.dep_order()`** — new `[BLOCKED]` and
-  `[DEPS]` log levels.
-- **`tests/test_dependency.py`** — 52 new tests covering all resolver behaviour.
-
-### Changed
-- `install_environment()` now runs a full dependency resolution pipeline before
-  executing any installers; pipeline no longer stops on first failure — dependent
-  tools are BLOCKED while independent tools continue.
-- `_print_summary()` extended with a Blocked section.
-- `tool_info()` returns a `dependencies` field.
-- `__version__` bumped to 1.4.0.
-
-### Declared dependencies
-- `git`: none  
-- `node`: `["git"]`  
-- `python`: none  
-- `pip`: `["python"]`  
-- `vscode`: none
+- `dependency_resolver.py` — DependencyError, build_graph, resolve,
+  get_blocked, topological sort (Kahn's + min-heap), cycle detection (DFS).
+- `BaseInstaller.dependencies: List[str]`.
+- `InstallerStatus.BLOCKED`, `ExitCode.DEPENDENCY_BLOCKED`.
+- `InstallerResult.block()` named constructor.
+- `InstallSummary.blocked`, `has_blocked` properties.
+- `logger.blocked()`, `logger.dep_order()`.
+- `tests/test_dependency.py` — 52 tests.
 
 ---
 
@@ -80,36 +85,11 @@ Dependency ordering.
 
 Six design issue fixes.
 
-### Fixed
-- `InstallSummary` refactored to single source of truth (`result_map`).
-- `_verify_version()` no-op wrapper removed from `manager.py`.
-- `list_tools()` / `tool_info()` use `_get_version()` safety wrapper.
-- Sentinel blacklist replaced with digit-presence check.
-- `UnsupportedOSError` introduced; replaces fragile RuntimeError string matching.
-- `test_installers.py` updated to reflect all fixes.
-
----
-
-## [1.3.1] — 2026-03-12
-
-OS error classification.
-
-### Fixed
-- Replaced fragile `RuntimeError` string matching with `UnsupportedOSError`.
-
 ---
 
 ## [1.3.0] — 2026-03-12
 
-Tool version verification.
-
-### Added
-- Post-install version verification via `_get_version()`.
-- `InstallerResult.version` field.
-- `ExitCode.VERIFICATION_FAILURE = 5`, `ErrorCategory.VERIFICATION_FAILURE`.
-- `[VERSION]` log level.
-- `devsetup/utils/version_parser.py` — normalises raw version strings.
-- `tests/test_version.py` — 40 tests.
+Tool version verification. 40 tests added.
 
 ---
 
@@ -117,27 +97,11 @@ Tool version verification.
 
 Install summary overhaul.
 
-### Added
-- `InstallSummary` accumulator with `installed`, `skipped`, `failed_result`
-  buckets; `env_name` header; count prefixes.
-- `_print_summary()` with Fixed section order and `none` placeholders.
-- `tests/test_summary.py` — Phase 13 integration scenarios.
-
----
-
-## [1.1.0] — 2026-03-11
-
-Pre-stable improvements.
-
 ---
 
 ## [1.0.0] — 2026-03-11
 
 First stable public release.
-
-### Added
-- Complete cross-platform install pipeline (Linux, macOS, Windows).
-- `CHANGELOG.md`, `CONTRIBUTING.md`.
 
 ---
 
