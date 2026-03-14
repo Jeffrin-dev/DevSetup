@@ -105,16 +105,19 @@ def print_env_summary(env: Dict[str, Any]) -> None:
 
 def _get_dependencies(tool_id: str) -> List[str]:
     """
-    Return the declared dependency list for tool_id from the installer registry.
+    Return the declared dependency list for tool_id via the public
+    tool_dependencies() API on the installer manager.
+
+    Uses the public API rather than accessing _REGISTRY directly, keeping
+    the CLI layer decoupled from installer internals (Architecture Rule 1).
 
     Read-only — never instantiates or runs the installer.
     Returns an empty list if the tool is not registered or has no dependencies.
     """
     try:
-        from devsetup.installers.manager import _REGISTRY
-        cls = _REGISTRY.get(tool_id)
-        if cls is None:
-            return []
-        return list(getattr(cls, "dependencies", []))
+        from devsetup.installers.manager import tool_dependencies
+        return tool_dependencies(tool_id)
+    except KeyError:
+        return []   # tool not registered — not an error in display context
     except Exception:
         return []
