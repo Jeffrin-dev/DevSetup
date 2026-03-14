@@ -322,5 +322,77 @@ class TestPluginLoader(unittest.TestCase):
             self.assertIn("mytool", result)
 
 
+class TestGuardedRegistry(unittest.TestCase):
+    """
+    Rule 7 fix — _GuardedRegistry must protect tools dynamically from the live
+    registry snapshot, not from a hardcoded _CORE_IDS list.
+    """
+
+    def _make_guarded(self, registry: dict) -> object:
+        from devsetup.core.plugin_loader import _GuardedRegistry
+        return _GuardedRegistry(registry, source="test_plugin")
+
+    def test_cannot_overwrite_existing_tool(self):
+        """Any tool present at construction time is blocked."""
+        g = self._make_guarded({"git": "orig"})
+        with self.assertRaises(ValueError):
+            g["git"] = "replaced"
+
+    def test_can_register_new_tool(self):
+        """A brand-new tool ID not in the registry is allowed."""
+        real = {"git": "orig"}
+        g = self._make_guarded(real)
+        g["docker"] = "DockerInstaller"
+        self.assertIn("docker", real)
+
+    def test_dynamic_protection_covers_non_hardcoded_tool(self):
+        """
+        Protection applies to ANY registered tool — not just the old hardcoded
+        five. A tool like 'docker' added to _REGISTRY before plugin load is
+        protected even though it was never in the old _CORE_IDS list.
+        """
+        real = {"git": "orig", "docker": "DockerInstaller"}
+        g = self._make_guarded(real)
+        with self.assertRaises(ValueError):
+            g["docker"] = "evil"
+        self.assertEqual(real["docker"], "DockerInstaller")
+
+    def test_initial_ids_snapshot_is_frozen_at_construction(self):
+        """
+        Tools added to _real after construction must not retroactively
+        become unwritable via _initial_ids — only the snapshot matters.
+        """
+        real = {"git": "orig"}
+        g = self._make_guarded(real)
+        # Add 'docker' to _real directly (simulates a prior plugin registering it)
+        real["docker"] = "DockerInstaller"
+        # 'docker' was not in snapshot — _initial_ids doesn't cover it,
+        # but the second guard (key in self._real) still blocks it
+        with self.assertRaises(ValueError):
+            g["docker"] = "evil"
+
+    def test_second_plugin_cannot_overwrite_first_plugin_tool(self):
+        """A tool registered by plugin A cannot be overwritten by plugin B."""
+        real = {"git": "orig"}
+        g_a = self._make_guarded(real)
+        g_a["mytool"] = "MyToolInstaller"
+        self.assertIn("mytool", real)
+
+        # Simulate second plugin trying to overwrite
+        g_b = self._make_guarded(real)
+        with self.assertRaises(ValueError):
+            g_b["mytool"] = "EvilInstaller"
+        self.assertEqual(real["mytool"], "MyToolInstaller")
+
+    def test_no_hardcoded_core_ids_attribute(self):
+        """_CORE_IDS must no longer exist — protection is dynamic."""
+        from devsetup.core.plugin_loader import _GuardedRegistry
+        self.assertFalse(
+            hasattr(_GuardedRegistry, "_CORE_IDS"),
+            "_CORE_IDS must be removed; protection is now derived from the "
+            "live registry snapshot (_initial_ids)",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
