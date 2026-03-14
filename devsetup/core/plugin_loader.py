@@ -80,24 +80,33 @@ class _GuardedRegistry(dict):
     """
     A dict proxy passed to plugin register() functions.
 
-    Allows plugins to add new tool IDs only — cannot overwrite core tools.
-    """
+    Allows plugins to add new tool IDs only.  Any tool already present in
+    the live registry at plugin-load time is protected from overwrite.
 
-    _CORE_IDS = frozenset({"git", "node", "pip", "python", "vscode"})
+    Protection is derived dynamically from the registry snapshot taken at
+    construction — not from a hardcoded list of names.  This means the
+    guard automatically covers every registered tool, present and future,
+    without any manual maintenance when new tools are added to _REGISTRY.
+    """
 
     def __init__(self, real_registry: dict, source: str) -> None:
         super().__init__(real_registry)
         self._real = real_registry
         self._source = source
+        # Snapshot of all tool IDs registered at plugin-load time.
+        # Derived from the live registry — never a hardcoded parallel copy.
+        self._initial_ids: frozenset = frozenset(real_registry.keys())
 
     def __setitem__(self, key: str, value) -> None:
-        if key in self._CORE_IDS:
+        if key in self._initial_ids:
             raise ValueError(
-                f"Plugin '{self._source}' tried to overwrite core tool '{key}' — blocked"
+                f"Plugin '{self._source}' tried to overwrite registered tool "
+                f"'{key}' — blocked"
             )
         if key in self._real:
             raise ValueError(
-                f"Plugin '{self._source}' tried to overwrite already-registered tool '{key}' — blocked"
+                f"Plugin '{self._source}' tried to overwrite already-registered "
+                f"tool '{key}' — blocked"
             )
         self._real[key] = value
         super().__setitem__(key, value)
