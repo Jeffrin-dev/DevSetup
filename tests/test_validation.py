@@ -173,7 +173,50 @@ class TestToolsList(unittest.TestCase):
         """v1.0 'installers' field must still be accepted."""
         validate(_valid_v10(), "t.json")
 
-    def test_tools_takes_precedence_over_installers(self):
+    def test_integer_entry_in_tools_raises(self):
+        """TL2 — integer entry must raise EnvironmentValidationError, not pass silently."""
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate(_valid(tools=[123]), "t.json")
+        self.assertIn("string", str(ctx.exception))
+        self.assertIn("index 0", str(ctx.exception))
+
+    def test_list_entry_in_tools_raises(self):
+        """TL2 — list-inside-list must raise EnvironmentValidationError, not TypeError."""
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate(_valid(tools=[["git"]]), "t.json")
+        self.assertIn("string", str(ctx.exception))
+
+    def test_none_entry_in_tools_raises(self):
+        """TL2 — None entry must raise EnvironmentValidationError."""
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate(_valid(tools=[None]), "t.json")
+        self.assertIn("string", str(ctx.exception))
+
+    def test_bool_entry_in_tools_raises(self):
+        """TL2 — bool entry must raise EnvironmentValidationError."""
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate(_valid(tools=[True]), "t.json")
+        self.assertIn("string", str(ctx.exception))
+
+    def test_dict_entry_in_tools_raises(self):
+        """TL2 — dict entry must raise EnvironmentValidationError, not TypeError."""
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate(_valid(tools=[{"id": "git"}]), "t.json")
+        self.assertIn("string", str(ctx.exception))
+
+    def test_non_string_entry_error_includes_index(self):
+        """TL2 — error message must include the offending index."""
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate(_valid(tools=["git", 99, "node"]), "t.json")
+        self.assertIn("index 1", str(ctx.exception))
+
+    def test_non_string_entry_error_names_type(self):
+        """TL2 — error message must name the actual type."""
+        with self.assertRaises(EnvironmentValidationError) as ctx:
+            validate(_valid(tools=[42]), "t.json")
+        self.assertIn("int", str(ctx.exception))
+
+
         """When both present, 'tools' is used."""
         data = {"id": "test", "name": "Test", "tools": ["git"], "installers": ["node"]}
         result = get_tools_list(data)
