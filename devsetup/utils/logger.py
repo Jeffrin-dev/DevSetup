@@ -19,6 +19,7 @@ Log levels supported:
   [DEPS]    — dependency resolution progress messages (v1.4, stdout)
   [VALID]   — environment config passed validation (v1.5, stdout)
   [INVALID] — environment config failed validation (v1.5, stderr)
+  [AUTO]    — prompt auto-accepted in non-interactive mode (v1.7, stdout)
 
 All messages include a timestamp for debugging.
 """
@@ -143,3 +144,15 @@ def invalid(message: str) -> None:
         [HH:MM:SS] [INVALID] ✗ web — duplicate tool 'git'
     """
     print(f"[{_timestamp()}] [INVALID] {message}", file=sys.stderr)
+
+
+def auto(message: str) -> None:
+    """
+    Print an auto-accepted prompt message to stdout (v1.7).
+
+    Used when --yes is active and a confirmation prompt is bypassed.
+
+    Example output:
+        [HH:MM:SS] [AUTO]    Proceed with installation? → yes (non-interactive mode)
+    """
+    print(f"[{_timestamp()}] [AUTO]    {message}")
