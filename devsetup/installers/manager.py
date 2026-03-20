@@ -331,21 +331,11 @@ def install_environment(
         warn("--force enabled. All tools will be reinstalled.")
 
     # ── v1.7: Non-interactive mode logging ────────────────────────────────
+    # Log once that non-interactive mode is active. The engine does not call
+    # confirm() — that is a CLI-layer utility. The engine's responsibility is
+    # to proceed without prompts and record the [AUTO] audit line.
     if yes_mode:
         log_auto("Non-interactive mode active (--yes). All prompts auto-accepted.")
-
-    # ── v1.7: Pre-install confirmation gate ───────────────────────────────
-    # Uses the centralised confirm() utility so future prompts automatically
-    # respect --yes. When yes_mode=False this gate is skipped (no prompt
-    # shown) preserving existing default behaviour — no breaking change.
-    if yes_mode:
-        from devsetup.utils.prompt import confirm
-        n = len(tools)
-        env_label = f"'{env_name}'" if env_name else f"{n} tool(s)"
-        confirm(
-            f"Proceed with installation of {env_label} ({n} tool(s))?",
-            auto_yes=True,
-        )
 
     # ── 2–4. Dependency resolution (Phases 4–6) ────────────────────────────
     dep_order("Resolving dependencies...")
