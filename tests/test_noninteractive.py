@@ -283,10 +283,12 @@ class TestDefaultActionEnforcement(unittest.TestCase):
 class TestYesModeThreading(unittest.TestCase):
 
     def test_auto_line_emitted_when_yes_mode(self):
-        """[AUTO] line must appear in output when yes_mode=True."""
+        """[AUTO] line must appear exactly once in output when yes_mode=True."""
         patches = _patches("git", detect=False, version="2.43.0")
         out, _ = _run_env(["git"], patches, yes=True)
-        self.assertIn("[AUTO]", out)
+        auto_lines = [l for l in out.splitlines() if "[AUTO]" in l]
+        self.assertEqual(len(auto_lines), 1,
+                         f"Expected exactly 1 [AUTO] line, got {len(auto_lines)}: {auto_lines}")
 
     def test_no_auto_line_without_yes_mode(self):
         """[AUTO] line must NOT appear when yes_mode=False."""
