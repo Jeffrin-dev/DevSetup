@@ -20,7 +20,6 @@ Architecture compliance:
   - This module is purely a utility; it contains no business logic.
 """
 
-import sys
 from devsetup.utils.logger import auto as log_auto, info as log_info
 
 
