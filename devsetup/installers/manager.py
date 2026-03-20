@@ -74,7 +74,8 @@ from devsetup.system.package_manager_detector import get_package_manager
 from devsetup.system.package_managers.base import PackageManagerError
 from devsetup.utils.logger import (
     info, error, success, warn, check, skip, install, fail,
-    debug, version_log, blocked as log_blocked, dep_order, auto as log_auto,
+    debug, version_log, blocked as log_blocked, dep_order,
+    auto as log_auto, verbose as log_verbose,
 )
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -101,6 +102,7 @@ def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
     try:
         ver = installer.version()
         if ver and _re.search(r"\d", ver):
+            log_verbose(f"Version detected: {tool_name} {ver}")
             debug(f"parsed version for {tool_name}: {ver}")
             return ver
         debug(f"version() returned non-version string for {tool_name}: {repr(ver)}")
@@ -157,6 +159,7 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
 
     check(tool_name)
     debug(f"Running detect() for {tool_name}")
+    log_verbose(f"Running detect() for {tool_name}")
 
     # ── Detection ──────────────────────────────────────────────────────────
     try:
@@ -339,6 +342,7 @@ def install_environment(
 
     # ── 2–4. Dependency resolution (Phases 4–6) ────────────────────────────
     dep_order("Resolving dependencies...")
+    log_verbose("DependencyResolver: starting resolution")
     try:
         ordered_tools, graph = resolve_with_graph(tools, _REGISTRY)
     except DependencyError as exc:
@@ -352,6 +356,8 @@ def install_environment(
             deps = graph.get(t, [])
             dep_hint = f"  (needs: {', '.join(deps)})" if deps else ""
             dep_order(f"  {i}. {t}{dep_hint}")
+            if deps:
+                log_verbose(f"DependencyResolver: {t} depends on {', '.join(deps)}")
     else:
         dep_order("No tools to install.")
 
