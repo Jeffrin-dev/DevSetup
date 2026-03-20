@@ -74,7 +74,7 @@ from devsetup.system.package_manager_detector import get_package_manager
 from devsetup.system.package_managers.base import PackageManagerError
 from devsetup.utils.logger import (
     info, error, success, warn, check, skip, install, fail,
-    debug, version_log, blocked as log_blocked, dep_order,
+    debug, version_log, blocked as log_blocked, dep_order, auto as log_auto,
 )
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -279,6 +279,7 @@ def install_environment(
     tools: List[str],
     force: bool = False,
     env_name: Optional[str] = None,
+    yes_mode: bool = False,
 ) -> None:
     """
     Install all tools in an environment, respecting dependency order.
@@ -296,11 +297,18 @@ def install_environment(
     7. Print summary (with Blocked section — Phase 11)
     8. Raise RuntimeError if any failures or blocked tools exist
 
+    v1.7 — Non-interactive mode:
+    When yes_mode=True the pre-install confirmation is auto-accepted and
+    logged as [AUTO]. Passes through to confirm() in prompt.py so all
+    future confirmation points are also auto-accepted.
+
     Parameters
     ----------
     tools : List[str]
     force : bool
     env_name : str | None
+    yes_mode : bool
+        When True, suppress confirmation prompts and proceed automatically.
 
     Raises
     ------
@@ -321,6 +329,23 @@ def install_environment(
 
     if force:
         warn("--force enabled. All tools will be reinstalled.")
+
+    # ── v1.7: Non-interactive mode logging ────────────────────────────────
+    if yes_mode:
+        log_auto("Non-interactive mode active (--yes). All prompts auto-accepted.")
+
+    # ── v1.7: Pre-install confirmation gate ───────────────────────────────
+    # Uses the centralised confirm() utility so future prompts automatically
+    # respect --yes. When yes_mode=False this gate is skipped (no prompt
+    # shown) preserving existing default behaviour — no breaking change.
+    if yes_mode:
+        from devsetup.utils.prompt import confirm
+        n = len(tools)
+        env_label = f"'{env_name}'" if env_name else f"{n} tool(s)"
+        confirm(
+            f"Proceed with installation of {env_label} ({n} tool(s))?",
+            auto_yes=True,
+        )
 
     # ── 2–4. Dependency resolution (Phases 4–6) ────────────────────────────
     dep_order("Resolving dependencies...")
