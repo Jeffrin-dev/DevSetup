@@ -19,12 +19,12 @@ v1.4.1:
 
 v1.6 (Environment Info Command):
   - info command extended: accepts a tool name OR environment ID.
-  - Auto-dispatch: registered tool → tool info; otherwise → env info.
-  - --env flag forces environment lookup (resolves ambiguity when a name
-    is both a registered tool and an environment ID, e.g. 'python').
-  - --summary flag: compact one-line tool list output (Phase 7).
-  - --verbose flag: includes per-tool dependency info (Phase 9).
-  - Exit codes: 0 = success, 1 = not found / invalid, 2 = unexpected error.
+  - --env / --summary / --verbose flags added.
+
+v1.7 (Non-Interactive Mode):
+  - --yes / -y added to install command (Phases 1, 8).
+  - Passed as yes_mode to install_environment() (Phase 5).
+  - Enables fully automated CI/CD usage without stdin interaction.
 """
 
 import argparse
@@ -53,9 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
             "  list                     List available environments\n"
             "  info <tool>              Show details for a specific tool\n"
             "  info <environment>       Show details for an environment\n"
-            "  info <name> --env        Force environment lookup\n\n"
+            "  info <n> --env           Force environment lookup\n\n"
             "Options:\n"
             "  --force                  Reinstall tools even if already installed\n"
+            "  --yes, -y                Non-interactive mode, auto-accept all prompts\n"
             "  --debug                  Enable verbose diagnostic output\n"
             "  --summary                Show compact tool list (info command)\n"
             "  --verbose                Show dependency info (info command)\n"
@@ -63,7 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  --help                   Show this help message\n\n"
             "Examples:\n"
             "  devsetup install web\n"
+            "  devsetup install web --yes\n"
             "  devsetup install web --force\n"
+            "  devsetup install web --force --yes\n"
             "  devsetup install web --debug\n"
             "  devsetup install --tool git\n"
             "  devsetup list\n"
@@ -104,6 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Force reinstall even if the tool is already installed.",
+    )
+    install_parser.add_argument(
+        "--yes", "-y",
+        action="store_true",
+        default=False,
+        dest="yes",
+        help=(
+            "Non-interactive mode: automatically accept all prompts. "
+            "Suitable for CI/CD pipelines and automated scripts."
+        ),
     )
     install_parser.add_argument(
         "--debug",
@@ -162,7 +175,8 @@ def cmd_install(args: argparse.Namespace) -> int:
     if getattr(args, "debug", False):
         os.environ["DEVSETUP_DEBUG"] = "1"
 
-    force = getattr(args, "force", False)
+    force    = getattr(args, "force", False)
+    yes_mode = getattr(args, "yes",   False)
 
     if args.tool:
         try:
@@ -190,7 +204,10 @@ def cmd_install(args: argparse.Namespace) -> int:
         info(f"Installing environment: {env['name']}")
         try:
             installer_manager.install_environment(
-                env["installers"], force=force, env_name=env["name"]
+                env["installers"],
+                force=force,
+                env_name=env["name"],
+                yes_mode=yes_mode,
             )
         except DependencyError as exc:
             error(str(exc))
@@ -232,25 +249,19 @@ def cmd_info(args: argparse.Namespace) -> int:
       2. If target is a registered tool AND --env is not set → show tool info.
       3. Otherwise → try as environment ID.
 
-    This ensures backward compatibility (devsetup info git still works)
-    while supporting devsetup info web (environment) and resolving the
-    'python' ambiguity via explicit --env flag.
-
-    Exit codes (Phase 11):
+    Exit codes:
       0 → success
       1 → not found or config invalid
       2 → unexpected error
     """
-    target = args.target
-    force_env = getattr(args, "env", False)
+    target    = args.target
+    force_env = getattr(args, "env",     False)
     summary   = getattr(args, "summary", False)
     verbose   = getattr(args, "verbose", False)
 
-    # ── Route: tool info (backward-compatible path) ───────────────────────────
     if not force_env and installer_manager.is_registered(target):
         return _cmd_tool_info(target)
 
-    # ── Route: environment info ───────────────────────────────────────────────
     return _cmd_env_info(target, summary=summary, verbose=verbose)
 
 
@@ -274,18 +285,7 @@ def _cmd_tool_info(tool_name: str) -> int:
 
 
 def _cmd_env_info(env_id: str, summary: bool = False, verbose: bool = False) -> int:
-    """
-    Print environment details using env_info formatter (v1.6).
-
-    Parameters
-    ----------
-    env_id : str
-        Environment identifier to look up.
-    summary : bool
-        Emit compact one-line tool list.
-    verbose : bool
-        Include per-tool dependency info in full output.
-    """
+    """Print environment details using env_info formatter (v1.6)."""
     try:
         env = environment_loader.load(env_id)
     except FileNotFoundError:
