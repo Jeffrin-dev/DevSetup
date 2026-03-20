@@ -14,17 +14,14 @@ Must NOT contain:
   - Environment loading
   - Business logic of any kind
 
-v1.4.1:
-  - DependencyError caught explicitly in cmd_install.
-
-v1.6 (Environment Info Command):
-  - info command extended: accepts a tool name OR environment ID.
-  - --env / --summary / --verbose flags added.
-
-v1.7 (Non-Interactive Mode):
-  - --yes / -y added to install command (Phases 1, 8).
-  - Passed as yes_mode to install_environment() (Phase 5).
-  - Enables fully automated CI/CD usage without stdin interaction.
+v1.4.1: DependencyError caught explicitly in cmd_install.
+v1.6:   info command extended with --env, --summary, --verbose.
+v1.7:   --yes / -y non-interactive mode.
+v1.8:   --verbose on install command (Phase 4/10).
+        --log-file <path> optional file output (Phase 12).
+        Sets DEVSETUP_VERBOSE / DEVSETUP_LOG_FILE env vars which
+        logger.py reads, keeping flag propagation to a single line
+        in the CLI layer.
 """
 
 import argparse
@@ -32,7 +29,7 @@ import os
 import sys
 
 from devsetup.__version__ import __version__
-from devsetup.utils.logger import info, error
+from devsetup.utils.logger import info, error, set_verbose, set_log_file
 from devsetup.installers import manager as installer_manager
 from devsetup.core import environment_loader
 from devsetup.core.plugin_loader import load_plugins
@@ -57,17 +54,19 @@ def build_parser() -> argparse.ArgumentParser:
             "Options:\n"
             "  --force                  Reinstall tools even if already installed\n"
             "  --yes, -y                Non-interactive mode, auto-accept all prompts\n"
-            "  --debug                  Enable verbose diagnostic output\n"
+            "  --verbose                Show detailed log output for debugging\n"
+            "  --log-file <path>        Save all log output to a file\n"
+            "  --debug                  Enable internal debug output\n"
             "  --summary                Show compact tool list (info command)\n"
-            "  --verbose                Show dependency info (info command)\n"
             "  --version                Show CLI version\n"
             "  --help                   Show this help message\n\n"
             "Examples:\n"
             "  devsetup install web\n"
             "  devsetup install web --yes\n"
+            "  devsetup install web --verbose\n"
+            "  devsetup install web --yes --verbose\n"
+            "  devsetup install web --log-file install.log\n"
             "  devsetup install web --force\n"
-            "  devsetup install web --force --yes\n"
-            "  devsetup install web --debug\n"
             "  devsetup install --tool git\n"
             "  devsetup list\n"
             "  devsetup info git\n"
@@ -119,10 +118,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     install_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help=(
+            "Show detailed log output for debugging: dependency resolution "
+            "steps, version detection, and internal decisions."
+        ),
+    )
+    install_parser.add_argument(
+        "--log-file",
+        metavar="PATH",
+        default=None,
+        dest="log_file",
+        help="Save all log output to PATH in addition to the console.",
+    )
+    install_parser.add_argument(
         "--debug",
         action="store_true",
         default=False,
-        help="Enable verbose diagnostic output (sets DEVSETUP_DEBUG=1).",
+        help="Enable internal debug output (sets DEVSETUP_DEBUG=1).",
     )
 
     # ── devsetup list ─────────────────────────────────────────────────────────
@@ -172,8 +187,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_install(args: argparse.Namespace) -> int:
     """Handle: devsetup install"""
+    # ── Apply logging configuration before anything runs ──────────────────
     if getattr(args, "debug", False):
         os.environ["DEVSETUP_DEBUG"] = "1"
+
+    if getattr(args, "verbose", False):
+        set_verbose(True)        # logger reads this via _is_verbose()
+
+    log_file = getattr(args, "log_file", None)
+    if log_file:
+        set_log_file(log_file)   # logger tees all output to this path
 
     force    = getattr(args, "force", False)
     yes_mode = getattr(args, "yes",   False)
@@ -244,7 +267,7 @@ def cmd_info(args: argparse.Namespace) -> int:
     """
     Handle: devsetup info <target> [--env] [--summary] [--verbose]
 
-    Dispatch logic (v1.6):
+    Dispatch logic:
       1. If --env is set → always look up as environment.
       2. If target is a registered tool AND --env is not set → show tool info.
       3. Otherwise → try as environment ID.
@@ -285,7 +308,7 @@ def _cmd_tool_info(tool_name: str) -> int:
 
 
 def _cmd_env_info(env_id: str, summary: bool = False, verbose: bool = False) -> int:
-    """Print environment details using env_info formatter (v1.6)."""
+    """Print environment details using env_info formatter."""
     try:
         env = environment_loader.load(env_id)
     except FileNotFoundError:
