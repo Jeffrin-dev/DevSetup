@@ -20,6 +20,8 @@ Key properties:
 - **Cross-platform** — works on Linux, macOS, and Windows
 - **Configuration-driven** — environments are JSON files, no code changes needed
 - **Extensible** — add tools or environments by dropping in a file
+- **Non-interactive** — full CI/CD support via `--yes` flag
+- **Observable** — `--verbose` and `--log-file` for detailed audit output
 
 ---
 
@@ -56,6 +58,30 @@ devsetup install --tool git
 
 # Show details for a tool
 devsetup info node
+
+# Show details for an environment
+devsetup info web --env
+```
+
+### CI/CD — Non-interactive mode
+
+Use `--yes` to skip all confirmation prompts. Combine with `--log-file` for
+a full audit trail:
+
+```bash
+devsetup install web --yes
+devsetup install web --yes --log-file /var/log/devsetup.log
+```
+
+### Verbose and debug output
+
+Use `--verbose` to see dependency resolution steps, version detection, and
+internal decisions:
+
+```bash
+devsetup install web --verbose
+devsetup install web --yes --verbose
+devsetup install web --verbose --log-file install.log
 ```
 
 Expected output for `devsetup install web`:
@@ -64,23 +90,35 @@ Expected output for `devsetup install web`:
 [HH:MM:SS] [INFO]    Installing environment: Web Development
 [HH:MM:SS] [INFO]    Detected OS: linux
 [HH:MM:SS] [INFO]    Detected package manager: apt
+[HH:MM:SS] [DEPS]    Resolving dependencies...
+[HH:MM:SS] [DEPS]    Computed install order:
+[HH:MM:SS] [DEPS]      1. git
+[HH:MM:SS] [DEPS]      2. node  (needs: git)
+[HH:MM:SS] [DEPS]      3. vscode
 [HH:MM:SS] [INFO]    [1/3] Installing git (linux / apt)
 [HH:MM:SS] [CHECK]   git
 [HH:MM:SS] [SKIP]    git already installed (git version 2.43.0)
+[HH:MM:SS] [VERSION] 2.43.0
 [HH:MM:SS] [INFO]    [2/3] Installing node (linux / apt)
 [HH:MM:SS] [CHECK]   node
 [HH:MM:SS] [INSTALL] node
 [HH:MM:SS] [OK]      node installed successfully.
+[HH:MM:SS] [VERSION] 20.11.1
 ...
+
+[HH:MM:SS] [INFO]    Environment: Web Development
 
 [HH:MM:SS] [INFO]    Installation Summary
 [HH:MM:SS] [INFO]    --------------------
-[HH:MM:SS] [INFO]    Installed:
-[HH:MM:SS] [INFO]      node
-[HH:MM:SS] [INFO]      vscode
-[HH:MM:SS] [INFO]    Skipped:
-[HH:MM:SS] [INFO]      git
-[HH:MM:SS] [INFO]    Failed:    None
+[HH:MM:SS] [INFO]    Installed (2):
+[HH:MM:SS] [INFO]      node (20.11.1)
+[HH:MM:SS] [INFO]      vscode (1.86.0)
+[HH:MM:SS] [INFO]    Skipped (1):
+[HH:MM:SS] [INFO]      git (2.43.0)
+[HH:MM:SS] [INFO]    Failed:
+[HH:MM:SS] [INFO]      none
+[HH:MM:SS] [INFO]    Blocked:
+[HH:MM:SS] [INFO]      none
 
 [HH:MM:SS] [OK]      Environment setup complete.
 ```
@@ -116,8 +154,14 @@ DevSetup automatically detects the OS and active package manager at runtime.
 | `devsetup list` | List all available environments |
 | `devsetup install <env>` | Install all tools for an environment |
 | `devsetup install <env> --force` | Reinstall all tools even if present |
+| `devsetup install <env> --yes` | Non-interactive install (no prompts) |
+| `devsetup install <env> --verbose` | Verbose output with dep resolution detail |
+| `devsetup install <env> --log-file <p>` | Tee all log output to a file |
 | `devsetup install --tool <t>` | Install a single named tool |
 | `devsetup info <tool>` | Show details for a specific tool |
+| `devsetup info <env> --env` | Show details for an environment |
+| `devsetup info <env> --summary` | Show compact one-line tool list |
+| `devsetup info <env> --verbose` | Show per-tool dependency info |
 | `devsetup --version` | Print the DevSetup version |
 | `devsetup --help` | Show usage guide |
 
@@ -128,6 +172,41 @@ DevSetup automatically detects the OS and active package manager at runtime.
 ```bash
 devsetup install web --force
 devsetup install --tool git --force
+```
+
+**`--yes` / `-y`** — Non-interactive mode. Auto-accepts all prompts and logs
+`[AUTO]` lines for every auto-accepted decision. Suitable for CI/CD pipelines
+and automated provisioning scripts.
+
+```bash
+devsetup install web --yes
+devsetup install python --yes --log-file /tmp/setup.log
+```
+
+**`--verbose`** — Detailed diagnostic output. Shows dependency resolution steps,
+version detection, and internal decisions. Verbose lines carry a full
+`YYYY-MM-DD HH:MM:SS` timestamp (all other lines use `HH:MM:SS`).
+
+```bash
+devsetup install web --verbose
+devsetup install web --yes --verbose
+```
+
+**`--log-file <path>`** — Tee all log output to a file in addition to the
+console. The file receives every log level including `[VERBOSE]` when
+`--verbose` is active.
+
+```bash
+devsetup install web --log-file install.log
+devsetup install web --yes --verbose --log-file /var/log/devsetup.log
+```
+
+**`--debug`** — Enable verbose internal debug output (sets `DEVSETUP_DEBUG=1`).
+Prints `[DEBUG]` lines with low-level internal state.
+
+```bash
+DEVSETUP_DEBUG=1 devsetup install web
+devsetup install web --debug
 ```
 
 ---
@@ -148,11 +227,13 @@ Environments are defined as JSON files in the `environments/` directory.
 
 | Field | Required | Description |
 |---|---|---|
-| `schema` | Yes | Config schema version. Must be `"1.0"`. |
+| `schema` | No | Config schema version. If present must be `"1.0"`. |
 | `id` | Yes | Unique identifier used in CLI commands. |
 | `name` | Yes | Human-readable display name. |
 | `description` | No | Optional description shown on `devsetup list`. |
 | `installers` | Yes | Ordered list of tool IDs to install. |
+
+The `tools` key is accepted as an alias for `installers` (v1.5+ format).
 
 To add a new environment, create `environments/<id>.json` — no code changes needed.
 
@@ -176,14 +257,26 @@ devsetup install web --force
 ```
 
 The `--force` flag bypasses skip logic and reinstalls all tools regardless of
-current state. Useful for CI environments, recovering from corrupted installs,
-or upgrading to latest versions.
+current state.
+
+---
+
+## Dependency Ordering
+
+DevSetup resolves tool dependencies automatically before installing.
+
+```
+git → node → vscode    (node requires git; vscode has no deps)
+python → pip → vscode  (pip requires python; vscode has no deps)
+```
+
+The install order is always deterministic: dependencies install before their
+dependents. If a dependency fails, all tools that depend on it are marked
+`BLOCKED` and skipped; independent tools continue to run.
 
 ---
 
 ## Package Manager Architecture
-
-DevSetup maps tools to the correct system package manager automatically.
 
 ```
 devsetup install web
@@ -207,107 +300,6 @@ Package Name Mapping → packages/git.json → "git" (apt) / "Git.Git" (winget)
 System Package Manager
 ```
 
-Package name mappings live in `packages/<toolname>.json`:
-
-```json
-{
-  "apt":    "git",
-  "dnf":    "git",
-  "pacman": "git",
-  "brew":   "git",
-  "winget": "Git.Git"
-}
-```
-
----
-
-## Full Architecture
-
-```
-CLI
- │
- ▼
-Environment Loader            (core/environment_loader.py)
- │
- ▼
-Environment Validator         (system/environment_validator.py)
- │
- ▼
-Installer Registry            (installers/manager.py)
- │
- ▼
-OS Detector                   (system/os_detector.py)
- │
- ▼
-Package Manager Detector      (system/package_manager_detector.py)
- │
- ▼
-Package Manager Runner        (system/package_managers/runner.py)
- │
- ▼
-Installer Modules             (installers/git.py, node.py, ...)
- │
- ▼
-Package Name Mapping          (packages/*.json)
- │
- ▼
-System Package Manager
-```
-
----
-
-## Project Structure
-
-```
-DevSetup/
-├── devsetup/
-│   ├── __version__.py
-│   ├── __main__.py
-│   ├── cli/
-│   │   └── main.py
-│   ├── core/
-│   │   └── environment_loader.py
-│   ├── system/
-│   │   ├── os_detector.py
-│   │   ├── command_detector.py
-│   │   ├── environment_validator.py
-│   │   ├── package_manager_detector.py
-│   │   └── package_managers/
-│   │       ├── runner.py
-│   │       ├── apt_manager.py
-│   │       ├── dnf_manager.py
-│   │       ├── pacman_manager.py
-│   │       ├── brew_manager.py
-│   │       └── winget_manager.py
-│   ├── installers/
-│   │   ├── base.py
-│   │   ├── manager.py
-│   │   ├── git.py
-│   │   ├── node.py
-│   │   ├── pip.py
-│   │   ├── python.py
-│   │   └── vscode.py
-│   └── utils/
-│       ├── logger.py
-│       └── package_loader.py
-├── environments/
-│   ├── web.json
-│   ├── python.json
-│   └── data-science.json
-├── packages/
-│   ├── git.json
-│   ├── node.json
-│   ├── pip.json
-│   ├── python.json
-│   └── vscode.json
-├── tests/
-│   ├── test_cli.py
-│   ├── test_installers.py
-│   └── test_config.py
-└── plugins/
-    └── README.md
-```
-
 ---
 
 ## Troubleshooting
@@ -327,14 +319,15 @@ environments, or create the file yourself.
 Use `--force` to reinstall: `devsetup install --tool git --force`
 
 **`devsetup list` shows no environments**
-Confirm that `environments/` contains `.json` files with valid `schema`, `id`,
-`name`, and `installers` fields.
+Confirm that `environments/` contains `.json` files with valid `id`, `name`,
+and `installers` fields.
 
 **Enable debug output**
-Set `DEVSETUP_DEBUG=1` for verbose diagnostics:
 
 ```bash
 DEVSETUP_DEBUG=1 devsetup install web
+# or
+devsetup install web --debug
 ```
 
 ---
