@@ -17,11 +17,10 @@ Must NOT contain:
 v1.4.1: DependencyError caught explicitly in cmd_install.
 v1.6:   info command extended with --env, --summary, --verbose.
 v1.7:   --yes / -y non-interactive mode.
-v1.8:   --verbose on install command (Phase 4/10).
-        --log-file <path> optional file output (Phase 12).
-        Sets DEVSETUP_VERBOSE / DEVSETUP_LOG_FILE env vars which
-        logger.py reads, keeping flag propagation to a single line
-        in the CLI layer.
+v1.8:   --verbose on install command.
+        --log-file <path> optional file output.
+v1.9:   --force and --debug descriptions added to install help (Q7 fix).
+        Examples section added to both top-level and install epilog (Q8 fix).
 """
 
 import argparse
@@ -46,11 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Commands:\n"
             "  install <environment>    Install a development environment\n"
-            "  install --tool <n>       Install a single tool\n"
-            "  list                     List available environments\n"
+            "  install --tool <n>       Install a single tool by name\n"
+            "  list                     List all available environments\n"
             "  info <tool>              Show details for a specific tool\n"
             "  info <environment>       Show details for an environment\n"
-            "  info <n> --env           Force environment lookup\n\n"
+            "  info <n> --env           Force environment lookup\n"
+            "\n"
             "Options:\n"
             "  --force                  Reinstall tools even if already installed\n"
             "  --yes, -y                Non-interactive mode, auto-accept all prompts\n"
@@ -59,7 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  --debug                  Enable internal debug output\n"
             "  --summary                Show compact tool list (info command)\n"
             "  --version                Show CLI version\n"
-            "  --help                   Show this help message\n\n"
+            "  --help                   Show this help message\n"
+            "\n"
             "Examples:\n"
             "  devsetup install web\n"
             "  devsetup install web --yes\n"
@@ -68,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  devsetup install web --log-file install.log\n"
             "  devsetup install web --force\n"
             "  devsetup install --tool git\n"
+            "  devsetup install --tool git --force\n"
             "  devsetup list\n"
             "  devsetup info git\n"
             "  devsetup info web\n"
@@ -89,6 +91,21 @@ def build_parser() -> argparse.ArgumentParser:
     install_parser = subparsers.add_parser(
         "install",
         help="Install an environment or a single tool.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  devsetup install web\n"
+            "  devsetup install web --yes\n"
+            "  devsetup install web --force\n"
+            "  devsetup install web --verbose\n"
+            "  devsetup install web --yes --verbose\n"
+            "  devsetup install web --log-file install.log\n"
+            "  devsetup install --tool git\n"
+            "  devsetup install --tool git --force\n"
+            "\n"
+            "CI/CD non-interactive example:\n"
+            "  devsetup install web --yes --log-file /var/log/devsetup.log\n"
+        ),
     )
     install_group = install_parser.add_mutually_exclusive_group(required=True)
     install_group.add_argument(
@@ -99,13 +116,16 @@ def build_parser() -> argparse.ArgumentParser:
     install_group.add_argument(
         "--tool",
         metavar="TOOL",
-        help="Install a single tool by name (e.g. git).",
+        help="Install a single tool by name (e.g. git, node, vscode).",
     )
     install_parser.add_argument(
         "--force",
         action="store_true",
         default=False,
-        help="Force reinstall even if the tool is already installed.",
+        help=(
+            "Reinstall all tools even if they are already installed. "
+            "Useful for upgrading or recovering from corrupted installs."
+        ),
     )
     install_parser.add_argument(
         "--yes", "-y",
@@ -131,13 +151,16 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         default=None,
         dest="log_file",
-        help="Save all log output to PATH in addition to the console.",
+        help=(
+            "Save all log output to PATH in addition to the console. "
+            "Useful for CI/CD audit trails."
+        ),
     )
     install_parser.add_argument(
         "--debug",
         action="store_true",
         default=False,
-        help="Enable internal debug output (sets DEVSETUP_DEBUG=1).",
+        help="Enable verbose internal debug output (sets DEVSETUP_DEBUG=1).",
     )
 
     # ── devsetup list ─────────────────────────────────────────────────────────
@@ -187,19 +210,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_install(args: argparse.Namespace) -> int:
     """Handle: devsetup install"""
-    # ── Apply logging configuration before anything runs ──────────────────
     if getattr(args, "debug", False):
         os.environ["DEVSETUP_DEBUG"] = "1"
 
     if getattr(args, "verbose", False):
-        set_verbose(True)        # logger reads this via _is_verbose()
+        set_verbose(True)
 
     log_file = getattr(args, "log_file", None)
     if log_file:
-        set_log_file(log_file)   # logger tees all output to this path
+        set_log_file(log_file)
 
-    force    = getattr(args, "force", False)
-    yes_mode = getattr(args, "yes",   False)
+    force    = getattr(args, "force",   False)
+    yes_mode = getattr(args, "yes",     False)
 
     if args.tool:
         try:
@@ -271,11 +293,6 @@ def cmd_info(args: argparse.Namespace) -> int:
       1. If --env is set → always look up as environment.
       2. If target is a registered tool AND --env is not set → show tool info.
       3. Otherwise → try as environment ID.
-
-    Exit codes:
-      0 → success
-      1 → not found or config invalid
-      2 → unexpected error
     """
     target    = args.target
     force_env = getattr(args, "env",     False)
@@ -289,7 +306,7 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 
 def _cmd_tool_info(tool_name: str) -> int:
-    """Print tool installation details (existing behaviour, unchanged)."""
+    """Print tool installation details."""
     try:
         data = installer_manager.tool_info(tool_name)
     except KeyError as exc:
