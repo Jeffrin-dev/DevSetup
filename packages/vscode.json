@@ -1,7 +1,8 @@
 {
-  "apt":    null,
-  "dnf":    null,
+  "schema": "1.0",
+  "apt": null,
+  "dnf": null,
   "pacman": "code",
-  "brew":   "--cask visual-studio-code",
+  "brew": "--cask visual-studio-code",
   "winget": "Microsoft.VisualStudioCode"
 }
