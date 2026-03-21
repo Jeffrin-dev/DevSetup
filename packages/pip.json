@@ -1,7 +1,8 @@
 {
-  "apt":    "python3-pip",
-  "dnf":    "python3-pip",
+  "schema": "1.0",
+  "apt": "python3-pip",
+  "dnf": "python3-pip",
   "pacman": "python-pip",
-  "brew":   null,
+  "brew": null,
   "winget": null
 }
