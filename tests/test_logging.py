@@ -1,7 +1,7 @@
 """
 tests.test_logging
 -------------------
-Tests for DevSetup v1.8 logging improvements.
+Tests for DevSetup v1.8 logging system.
 
 Coverage:
   Phase 1  — logging requirements: structured, levelled, timestamped
@@ -10,13 +10,13 @@ Coverage:
   Phase 4  — --verbose on install command: VERBOSE messages appear
   Phase 5  — no raw print() outside logger.py
   Phase 6  — error/warning log levels work correctly
-  Phase 7  — full timestamp (YYYY-MM-DD HH:MM:SS) in verbose mode
+  Phase 7  — full timestamp (YYYY-MM-DD HH:MM:SS) in verbose mode only
   Phase 8  — per-tool logging: start, skip, success, failure, version
   Phase 9  — verbose + --yes combination
   Phase 10 — help text includes --verbose and --log-file
-  Phase 11 — VERBOSE level gated on verbose mode; INFO/WARN/ERROR always shown
+  Phase 11 — VERBOSE level gated on verbose mode; all other levels always shown
   Phase 12 — --log-file tees output to file
-  Phase 13 — all 5 roadmap test scenarios
+  Phase 13 — all 5 roadmap scenarios
 """
 
 import io
@@ -91,11 +91,8 @@ def _reset_logger():
 
 class TestLoggerAPI(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
-
-    def tearDown(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
     def test_set_verbose_enables_verbose(self):
         set_verbose(True)
@@ -148,11 +145,8 @@ class TestLoggerAPI(unittest.TestCase):
 
 class TestLogFormat(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
-
-    def tearDown(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
     def test_info_format_has_level_tag(self):
         out = _capture(lambda: info("hello"))
@@ -175,51 +169,51 @@ class TestLogFormat(unittest.TestCase):
         self.assertRegex(out.strip(), r"^\[.+\] \[VERBOSE\]\s+detail$")
 
     def test_normal_timestamp_is_short(self):
-        """Normal mode: HH:MM:SS (no date part)."""
-        set_verbose(False)
         ts = _timestamp()
         self.assertRegex(ts, r"^\d{2}:\d{2}:\d{2}$")
 
     def test_normal_log_contains_short_timestamp(self):
-        set_verbose(False)
         out = _capture(lambda: info("msg"))
         self.assertRegex(out.strip(), r"^\[\d{2}:\d{2}:\d{2}\]")
+
+    def test_log_format_is_machine_parseable(self):
+        """Every non-blank log line must match [TIMESTAMP] [LEVEL] message."""
+        out = _capture(lambda: info("parseable"))
+        for line in out.splitlines():
+            if line.strip():
+                self.assertRegex(
+                    line.strip(),
+                    r"^\[[\d:]{8}\] \[[A-Z]+\s*\]",
+                    f"Line does not match log format: {line!r}",
+                )
 
 
 # ── Phase 7: Timestamp handling ───────────────────────────────────────────────
 
 class TestTimestamps(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
-
-    def tearDown(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
     def test_verbose_timestamp_is_full(self):
-        """_timestamp_full() always returns YYYY-MM-DD HH:MM:SS for VERBOSE lines."""
-        from devsetup.utils.logger import _timestamp_full
         ts = _timestamp_full()
         self.assertRegex(ts, r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 
-    def test_normal_timestamp_always_short(self):
-        """_timestamp() always returns HH:MM:SS regardless of verbose mode."""
+    def test_normal_timestamp_always_short_regardless_of_verbose(self):
         for v in (True, False):
             set_verbose(v)
             ts = _timestamp()
             self.assertRegex(ts, r"^\d{2}:\d{2}:\d{2}$",
                              f"Short timestamp broken when verbose={v}")
 
-    def test_info_always_has_short_timestamp(self):
-        """[INFO] lines always use short timestamp even in verbose mode."""
+    def test_info_always_uses_short_timestamp(self):
         for v in (True, False):
             set_verbose(v)
             out = _capture(lambda: info("msg"))
             self.assertRegex(out.strip(), r"^\[\d{2}:\d{2}:\d{2}\]",
                              f"Short timestamp broken for INFO when verbose={v}")
 
-    def test_verbose_line_has_full_timestamp(self):
-        """[VERBOSE] lines use full YYYY-MM-DD HH:MM:SS timestamp."""
+    def test_verbose_line_uses_full_timestamp(self):
         set_verbose(True)
         out = _capture(lambda: verbose("detail"))
         self.assertRegex(out.strip(), r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]")
@@ -229,15 +223,13 @@ class TestTimestamps(unittest.TestCase):
         out = _capture(lambda: info("msg"))
         self.assertNotRegex(out.strip(), r"^\[\d{4}-")
 
-    def test_timestamp_cross_platform(self):
-        """Timestamp must not raise on any supported platform."""
-        from devsetup.utils.logger import _timestamp_full
+    def test_timestamps_do_not_raise_on_any_platform(self):
         for v in (True, False):
             set_verbose(v)
             try:
-                ts = _timestamp()
+                ts  = _timestamp()
                 tsf = _timestamp_full()
-                self.assertIsInstance(ts, str)
+                self.assertIsInstance(ts,  str)
                 self.assertIsInstance(tsf, str)
             except Exception as e:
                 self.fail(f"timestamp raised with verbose={v}: {e}")
@@ -247,13 +239,10 @@ class TestTimestamps(unittest.TestCase):
 
 class TestVerboseInstallFlag(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
-    def tearDown(self):
-        _reset_logger()
-
-    def test_verbose_flag_accepted_on_install(self):
+    def test_verbose_flag_accepted_on_install_env(self):
         with patch("devsetup.core.environment_loader.load",
                    return_value={"id": "web", "name": "Web",
                                  "installers": ["git"]}), \
@@ -261,23 +250,12 @@ class TestVerboseInstallFlag(unittest.TestCase):
             _, _, code = _run(["install", "web", "--verbose"])
         self.assertEqual(code, 0)
 
-    def test_verbose_flag_sets_verbose_mode(self):
-        captured = []
-        orig = log_module._is_verbose
-
-        def spy():
-            result = orig()
-            captured.append(result)
-            return result
-
-        with patch.object(log_module, "_is_verbose", side_effect=spy), \
-             patch("devsetup.core.environment_loader.load",
+    def test_verbose_flag_activates_verbose_mode(self):
+        with patch("devsetup.core.environment_loader.load",
                    return_value={"id": "web", "name": "Web",
                                  "installers": ["git"]}), \
              patch("devsetup.installers.manager.install_environment"):
             _run(["install", "web", "--verbose"])
-
-        # set_verbose(True) was called, so subsequent _is_verbose() should be True
         self.assertTrue(log_module._is_verbose())
 
     def test_verbose_install_shows_verbose_messages(self):
@@ -297,22 +275,19 @@ class TestVerboseInstallFlag(unittest.TestCase):
             out, _, _ = _run(["install", "--tool", "git"])
         self.assertNotIn("[VERBOSE]", out)
 
-    def test_verbose_shows_full_timestamp(self):
-        """[VERBOSE] lines must carry a full YYYY-MM-DD timestamp."""
+    def test_verbose_lines_carry_full_timestamp(self):
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps:
                 stack.enter_context(p)
             out, _, _ = _run(["install", "--tool", "git", "--verbose"])
-        # Only VERBOSE lines have full timestamp — other levels keep HH:MM:SS
         verbose_lines = [l for l in out.splitlines() if "[VERBOSE]" in l]
         self.assertTrue(len(verbose_lines) > 0, "Expected at least one [VERBOSE] line")
         for line in verbose_lines:
             self.assertRegex(line.strip(),
                              r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]")
 
-    def test_verbose_dep_resolution_logged(self):
-        """Verbose install must show [VERBOSE] dep resolution messages."""
+    def test_verbose_shows_dep_resolution_detail(self):
         ps = (
             _patches("git",  detect=False, version="2.43.0")
             + _patches("node", detect=False, version="20.x")
@@ -325,7 +300,6 @@ class TestVerboseInstallFlag(unittest.TestCase):
                                      "installers": ["git", "node"]}):
                 out, _, _ = _run(["install", "web", "--verbose"])
         self.assertIn("[VERBOSE]", out)
-        # Dependency resolver messages
         self.assertIn("DependencyResolver", out)
 
 
@@ -333,11 +307,8 @@ class TestVerboseInstallFlag(unittest.TestCase):
 
 class TestLogLevelGating(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
-
-    def tearDown(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
     def test_info_always_shown(self):
         set_verbose(False)
@@ -364,7 +335,7 @@ class TestLogLevelGating(unittest.TestCase):
         out = _capture(lambda: verbose("detail"))
         self.assertIn("[VERBOSE]", out)
 
-    def test_normal_install_no_verbose_lines(self):
+    def test_normal_install_produces_no_verbose_lines(self):
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps:
@@ -372,7 +343,7 @@ class TestLogLevelGating(unittest.TestCase):
             out, _, _ = _run(["install", "--tool", "git"])
         self.assertNotIn("[VERBOSE]", out)
 
-    def test_verbose_install_has_verbose_lines(self):
+    def test_verbose_install_produces_verbose_lines(self):
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps:
@@ -385,11 +356,8 @@ class TestLogLevelGating(unittest.TestCase):
 
 class TestPerToolLogging(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
-
-    def tearDown(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
     def test_install_start_logged(self):
         ps = _patches("git", detect=False, version="2.43.0")
@@ -398,21 +366,21 @@ class TestPerToolLogging(unittest.TestCase):
             out, _, _ = _run(["install", "--tool", "git"])
         self.assertIn("[INSTALL]", out)
 
-    def test_skip_logged_when_detected(self):
+    def test_skip_logged_when_already_installed(self):
         ps = _patches("git", detect=True, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
             out, _, _ = _run(["install", "--tool", "git"])
         self.assertIn("[SKIP]", out)
 
-    def test_success_logged_on_install(self):
+    def test_success_logged_after_install(self):
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
             out, _, _ = _run(["install", "--tool", "git"])
         self.assertIn("[OK]", out)
 
-    def test_failure_logged_on_error(self):
+    def test_failure_logged_on_pm_error(self):
         pm_err = PackageManagerError("apt error", pm_exit_code=1)
         ps = _patches("git", detect=False, fail_with=pm_err)
         with ExitStack() as stack:
@@ -420,7 +388,7 @@ class TestPerToolLogging(unittest.TestCase):
             _, err, _ = _run(["install", "--tool", "git"])
         self.assertIn("[FAIL]", err)
 
-    def test_version_logged_after_install(self):
+    def test_version_logged_after_successful_install(self):
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
@@ -429,7 +397,6 @@ class TestPerToolLogging(unittest.TestCase):
         self.assertIn("2.43.0", out)
 
     def test_version_logged_in_verbose_mode(self):
-        """Verbose mode shows [VERBOSE] version detection detail."""
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
@@ -437,16 +404,20 @@ class TestPerToolLogging(unittest.TestCase):
         self.assertIn("Version detected", out)
         self.assertIn("2.43.0", out)
 
+    def test_check_logged_before_detect(self):
+        ps = _patches("git", detect=True, version="2.43.0")
+        with ExitStack() as stack:
+            for p in ps: stack.enter_context(p)
+            out, _, _ = _run(["install", "--tool", "git"])
+        self.assertIn("[CHECK]", out)
+
 
 # ── Phase 9: Verbose + non-interactive ───────────────────────────────────────
 
 class TestVerboseWithYes(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
-
-    def tearDown(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
     def test_verbose_yes_combination_exits_0(self):
         with patch("devsetup.core.environment_loader.load",
@@ -456,7 +427,7 @@ class TestVerboseWithYes(unittest.TestCase):
             _, _, code = _run(["install", "web", "--yes", "--verbose"])
         self.assertEqual(code, 0)
 
-    def test_verbose_yes_shows_auto_and_verbose(self):
+    def test_verbose_yes_shows_both_auto_and_verbose_lines(self):
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
@@ -467,7 +438,7 @@ class TestVerboseWithYes(unittest.TestCase):
         self.assertIn("[AUTO]",    out)
         self.assertIn("[VERBOSE]", out)
 
-    def test_skipped_tools_logged_with_verbose_yes(self):
+    def test_skipped_tools_logged_in_verbose_yes_mode(self):
         ps = _patches("git", detect=True, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
@@ -477,16 +448,28 @@ class TestVerboseWithYes(unittest.TestCase):
                 out, _, _ = _run(["install", "web", "--yes", "--verbose"])
         self.assertIn("[SKIP]", out)
 
+    def test_verbose_yes_dep_order_logged(self):
+        ps = (
+            _patches("git",  detect=False, version="2.43.0")
+            + _patches("node", detect=False, version="20.x")
+        )
+        with ExitStack() as stack:
+            for p in ps: stack.enter_context(p)
+            with patch("devsetup.core.environment_loader.load",
+                       return_value={"id": "web", "name": "Web",
+                                     "installers": ["git", "node"]}):
+                out, _, _ = _run(["install", "web", "--yes", "--verbose"])
+        self.assertIn("[DEPS]",    out)
+        self.assertIn("[VERBOSE]", out)
+        self.assertIn("[AUTO]",    out)
+
 
 # ── Phase 12: Log file output ─────────────────────────────────────────────────
 
 class TestLogFile(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
-
-    def tearDown(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
     def test_log_file_flag_accepted(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".log",
@@ -511,13 +494,12 @@ class TestLogFile(unittest.TestCase):
             with ExitStack() as stack:
                 for p in ps: stack.enter_context(p)
                 _run(["install", "--tool", "git", "--log-file", path])
-            with open(path, "r") as fh:
+            with open(path) as fh:
                 contents = fh.read()
             self.assertGreater(len(contents.strip()), 0)
-            # CHECK/OK/VERSION are the levels emitted by install --tool
             self.assertTrue(
                 any(tag in contents for tag in ("[CHECK]", "[OK]", "[INSTALL]")),
-                f"No expected log tags found in file: {contents[:200]}",
+                f"No expected log tags in file: {contents[:200]}",
             )
         finally:
             os.unlink(path)
@@ -530,17 +512,15 @@ class TestLogFile(unittest.TestCase):
             ps = _patches("git", detect=False, version="2.43.0")
             with ExitStack() as stack:
                 for p in ps: stack.enter_context(p)
-                out, _, _ = _run(["install", "--tool", "git",
-                                   "--log-file", path])
-            with open(path, "r") as fh:
+                out, _, _ = _run(["install", "--tool", "git", "--log-file", path])
+            with open(path) as fh:
                 file_contents = fh.read()
-            # Both console and file should have content
             self.assertGreater(len(out.strip()), 0)
             self.assertGreater(len(file_contents.strip()), 0)
         finally:
             os.unlink(path)
 
-    def test_log_file_contains_install_log(self):
+    def test_log_file_contains_tool_name_and_ok(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".log",
                                          delete=False) as f:
             path = f.name
@@ -570,9 +550,8 @@ class TestLogFile(unittest.TestCase):
             set_log_file(None)
             os.unlink(path)
 
-    def test_invalid_log_file_does_not_crash(self):
-        """A bad log file path must not crash the install."""
-        set_log_file("/nonexistent_dir/devsetup_test.log")
+    def test_invalid_log_file_path_does_not_crash(self):
+        set_log_file("/nonexistent_dir_xyz/devsetup_test.log")
         # Must not raise
         out = _capture(lambda: info("should not crash"))
         self.assertIn("[INFO]", out)
@@ -589,75 +568,202 @@ class TestHelpText(unittest.TestCase):
         finally: sys.stdout = old
         return buf.getvalue()
 
+    def _top_help(self):
+        buf = io.StringIO(); old = sys.stdout; sys.stdout = buf
+        try: main(["--help"])
+        except SystemExit: pass
+        finally: sys.stdout = old
+        return buf.getvalue()
+
     def test_verbose_flag_in_install_help(self):
         self.assertIn("--verbose", self._install_help())
 
     def test_log_file_flag_in_install_help(self):
         self.assertIn("--log-file", self._install_help())
 
-    def test_verbose_description_in_help(self):
-        help_text = self._install_help().lower()
-        self.assertIn("verbose", help_text)
+    def test_force_flag_has_description(self):
+        help_text = self._install_help()
+        self.assertIn("--force", help_text)
+        # v1.9 fix: --force must have a real description, not just the flag name
+        self.assertIn("Reinstall", help_text)
 
-    def test_log_file_description_in_help(self):
-        help_text = self._install_help().lower()
-        self.assertIn("log", help_text)
+    def test_debug_flag_has_description(self):
+        help_text = self._install_help()
+        self.assertIn("--debug", help_text)
+        self.assertIn("debug", help_text.lower())
+
+    def test_install_help_has_examples_section(self):
+        self.assertIn("Examples:", self._install_help())
+
+    def test_top_help_has_examples_section(self):
+        self.assertIn("Examples:", self._top_help())
+
+    def test_top_help_examples_include_web(self):
+        self.assertIn("devsetup install web", self._top_help())
+
+    def test_top_help_examples_include_list(self):
+        self.assertIn("devsetup list", self._top_help())
+
+    def test_install_help_examples_include_yes(self):
+        self.assertIn("--yes", self._install_help())
+
+    def test_install_help_examples_include_ci_cd(self):
+        self.assertIn("CI/CD", self._install_help())
 
 
 # ── Phase 5: No raw print() outside logger ───────────────────────────────────
 
 class TestNoRawPrint(unittest.TestCase):
 
-    def test_logger_uses_emit_not_print(self):
-        """logger.py must route everything through _emit, not raw print()."""
-        import inspect, devsetup.utils.logger as lg
-        src = inspect.getsource(lg)
-        lines = src.splitlines()
-        emit_body = False
-        in_docstring = False
+    def test_no_raw_print_outside_logger(self):
+        """All output must route through devsetup.utils.logger._emit."""
+        import ast, os
+
         violations = []
-        for i, line in enumerate(lines, 1):
-            stripped = line.strip()
-            # Track docstring boundaries
-            if stripped.count('"""') % 2 == 1:
-                in_docstring = not in_docstring
-            if in_docstring or stripped.startswith("#"):
-                continue
-            if "def _emit(" in stripped:
-                emit_body = True
-            elif stripped.startswith("def ") and emit_body:
-                emit_body = False
-            if not emit_body and "print(" in stripped:
-                violations.append(f"line {i}: {stripped}")
+        for root, dirs, files in os.walk("devsetup"):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+                path = os.path.join(root, fname)
+                if "logger.py" in path:
+                    continue
+                src = open(path).read()
+                for node in ast.walk(ast.parse(src)):
+                    if isinstance(node, ast.Call):
+                        func = node.func
+                        if isinstance(func, ast.Name) and func.id == "print":
+                            violations.append(f"{path}:{node.lineno}")
+
         self.assertEqual(violations, [],
-                         f"Raw print() outside _emit: {violations}")
+                         f"Raw print() calls found outside logger: {violations}")
 
 
-# ── Phase 13: Roadmap test scenarios ─────────────────────────────────────────
+# ── Phase 6: Error and warning levels ────────────────────────────────────────
+
+class TestErrorAndWarnLevels(unittest.TestCase):
+
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
+
+    def test_error_goes_to_stderr_not_stdout(self):
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        old = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = buf_out, buf_err
+        try:
+            error("test error")
+        finally:
+            sys.stdout, sys.stderr = old
+        self.assertIn("[ERROR]", buf_err.getvalue())
+        self.assertNotIn("[ERROR]", buf_out.getvalue())
+
+    def test_info_goes_to_stdout_not_stderr(self):
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        old = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = buf_out, buf_err
+        try:
+            info("test info")
+        finally:
+            sys.stdout, sys.stderr = old
+        self.assertIn("[INFO]", buf_out.getvalue())
+        self.assertNotIn("[INFO]", buf_err.getvalue())
+
+    def test_warn_goes_to_stdout(self):
+        out = _capture(lambda: warn("test warn"))
+        self.assertIn("[WARN]", out)
+
+    def test_fail_goes_to_stderr(self):
+        from devsetup.utils.logger import fail
+        buf = io.StringIO(); old = sys.stderr; sys.stderr = buf
+        fail("test fail"); sys.stderr = old
+        self.assertIn("[FAIL]", buf.getvalue())
+
+    def test_blocked_goes_to_stderr(self):
+        from devsetup.utils.logger import blocked
+        buf = io.StringIO(); old = sys.stderr; sys.stderr = buf
+        blocked("dep failed"); sys.stderr = old
+        self.assertIn("[BLOCKED]", buf.getvalue())
+
+    def test_invalid_goes_to_stderr(self):
+        from devsetup.utils.logger import invalid
+        buf = io.StringIO(); old = sys.stderr; sys.stderr = buf
+        invalid("bad config"); sys.stderr = old
+        self.assertIn("[INVALID]", buf.getvalue())
+
+
+# ── Phase 1: logging requirements ────────────────────────────────────────────
+
+class TestLoggingRequirements(unittest.TestCase):
+
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
+
+    def test_all_log_lines_are_structured(self):
+        """Every non-blank log line must match [TIMESTAMP] [LEVEL] format."""
+        ps = _patches("git", detect=False, version="2.43.0")
+        with ExitStack() as stack:
+            for p in ps: stack.enter_context(p)
+            out, _, _ = _run(["install", "--tool", "git"])
+        for line in out.splitlines():
+            if line.strip():
+                self.assertRegex(
+                    line.strip(),
+                    r"^\[[\d:]{8}\] \[[A-Z]+\s*\]",
+                    f"Line not structured: {line!r}",
+                )
+
+    def test_all_log_levels_use_capitalised_level_names(self):
+        """[LEVEL] must always be uppercase."""
+        ps = _patches("git", detect=False, version="2.43.0")
+        with ExitStack() as stack:
+            for p in ps: stack.enter_context(p)
+            out, err, _ = _run(["install", "--tool", "git"])
+        all_output = out + err
+        levels = re.findall(r"\[([A-Za-z]+)\]", all_output)
+        for level in levels:
+            if level not in ("h", "H"):   # argparse uses [h] for metavar
+                self.assertEqual(level, level.upper(),
+                                 f"Level not uppercase: [{level}]")
+
+    def test_log_output_is_deterministic_between_runs(self):
+        """Same inputs must produce same log structure (not content) twice."""
+        ps1 = _patches("git", detect=True, version="2.43.0")
+        ps2 = _patches("git", detect=True, version="2.43.0")
+
+        with ExitStack() as stack:
+            for p in ps1: stack.enter_context(p)
+            out1, _, _ = _run(["install", "--tool", "git"])
+
+        with ExitStack() as stack:
+            for p in ps2: stack.enter_context(p)
+            out2, _, _ = _run(["install", "--tool", "git"])
+
+        # Structure (levels, count) must be identical; timestamps differ
+        levels1 = re.findall(r"\[([A-Z]+)\s*\]", out1)
+        levels2 = re.findall(r"\[([A-Z]+)\s*\]", out2)
+        self.assertEqual(levels1, levels2,
+                         "Log level sequence differs between identical runs")
+
+
+# ── Phase 13: Roadmap scenarios ───────────────────────────────────────────────
 
 class TestRoadmapScenarios(unittest.TestCase):
 
-    def setUp(self):
-        _reset_logger()
-
-    def tearDown(self):
-        _reset_logger()
+    def setUp(self):    _reset_logger()
+    def tearDown(self): _reset_logger()
 
     def test_scenario_1_normal_install_no_verbose(self):
-        """Scenario 1: normal install → only INFO, WARN, ERROR shown."""
+        """Normal install shows standard levels only — no [VERBOSE]."""
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
             out, _, code = _run(["install", "--tool", "git"])
         self.assertEqual(code, 0)
         self.assertNotIn("[VERBOSE]", out)
-        # install --tool emits CHECK/INSTALL/OK — not [INFO] for single-tool path
-        self.assertTrue(
-            any(tag in out for tag in ("[CHECK]", "[OK]", "[INSTALL]")),
-        )
+        self.assertTrue(any(tag in out for tag in ("[CHECK]", "[OK]", "[INSTALL]")))
 
     def test_scenario_2_verbose_install(self):
-        """Scenario 2: install with --verbose → VERBOSE messages appear."""
+        """install --verbose shows [VERBOSE] lines."""
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
@@ -666,7 +772,7 @@ class TestRoadmapScenarios(unittest.TestCase):
         self.assertIn("[VERBOSE]", out)
 
     def test_scenario_3_noninteractive_verbose(self):
-        """Scenario 3: --yes --verbose → detailed automated log."""
+        """--yes --verbose shows [AUTO] and [VERBOSE] together."""
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
@@ -679,7 +785,7 @@ class TestRoadmapScenarios(unittest.TestCase):
         self.assertIn("[AUTO]",    out)
 
     def test_scenario_4_error_case(self):
-        """Scenario 4: error cases → proper messages and codes."""
+        """Failures produce [FAIL] on stderr and exit code 1."""
         pm_err = PackageManagerError("err", pm_exit_code=1)
         ps = _patches("git", detect=False, fail_with=pm_err)
         with ExitStack() as stack:
@@ -688,8 +794,8 @@ class TestRoadmapScenarios(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("[FAIL]", err)
 
-    def test_scenario_5_logs_consistent(self):
-        """Scenario 5: all log lines follow [TIMESTAMP] [LEVEL] format."""
+    def test_scenario_5_all_log_lines_follow_format(self):
+        """Every output line must match [TIMESTAMP] [LEVEL] format."""
         ps = _patches("git", detect=False, version="2.43.0")
         with ExitStack() as stack:
             for p in ps: stack.enter_context(p)
