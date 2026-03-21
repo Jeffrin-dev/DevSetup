@@ -1,7 +1,8 @@
 {
-  "apt":    "git",
-  "dnf":    "git",
+  "schema": "1.0",
+  "apt": "git",
+  "dnf": "git",
   "pacman": "git",
-  "brew":   "git",
+  "brew": "git",
   "winget": "Git.Git"
 }
