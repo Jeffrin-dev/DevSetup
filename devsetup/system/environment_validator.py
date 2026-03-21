@@ -9,50 +9,27 @@ Responsibilities:
   - Verify schema version is supported (if present — schema is optional in v1.5)
   - Confirm tools array is non-empty, correctly typed, and duplicate-free
   - Validate environment ID format (lowercase, alphanumeric + hyphens)
-  - Confirm all tool IDs exist in the installer registry
   - Detect and reject duplicate environment IDs across config files
 
-Field name compatibility (v1.5):
-  The tools list may be supplied under either the 'tools' key (v1.5 format)
-  or the 'installers' key (v1.0 backward-compatible format). Both are
-  accepted. 'tools' takes precedence when both are present.
-  Downstream code (environment_loader) normalises to 'installers' after
-  validation so the rest of the system is unchanged.
+Architecture note (v1.9 — Rule 6 / circular-dependency fix):
+  _check_installer_ids() was previously here via a deferred import of
+  installers/manager.py.  That created an upward dependency:
+    system/ → installers/  while  installers/manager.py → system/
+  The check is now in environment_loader.py, which legitimately sits
+  above both layers.  This module contains structural/format validation
+  only — zero imports from installers/.
 
-This module is separate from environment_loader (Architecture Rule 6).
-The loader reads and parses. The validator checks correctness.
-
-No installation logic. No OS logic. Validation only.
-
-v1.5 additions over v1.4:
-  - schema field is now optional (not required)
-  - 'tools' accepted as field name alongside 'installers'
-  - _check_id_format()     — Phase 7
-  - _check_field_types()   — Phase 3
-  - _check_duplicate_tools() — Phase 6
-  - Improved error messages include environment id — Phase 12
+No installation logic. No OS logic. No installer-registry imports.
+Validation only.
 """
 
 import re
 from typing import Any, Dict, List, Optional
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-# Required fields regardless of schema version.
-# 'schema' is intentionally absent — it is optional in v1.5.
-# The tools list may appear as 'tools' OR 'installers'; checked separately.
 REQUIRED_BASE_FIELDS: frozenset = frozenset({"id", "name"})
-
 SUPPORTED_SCHEMAS: frozenset = frozenset({"1.0"})
-
-# Environment ID must be lowercase, start with a letter, contain only
-# lowercase letters, digits, and hyphens.
-# Valid:   web, python, data-science, python3
-# Invalid: Web Dev, _web, 123env, web_env
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
 
-
-# ── Public exception ──────────────────────────────────────────────────────────
 
 class EnvironmentValidationError(ValueError):
     """
@@ -64,31 +41,8 @@ class EnvironmentValidationError(ValueError):
     pass
 
 
-# ── Public validation functions ───────────────────────────────────────────────
-
 def validate_structure(data: Any, source: str) -> None:
-    """
-    Verify the parsed JSON root value is a dict (Phase 9 / Rule 6).
-
-    Must be called by the loader before validate(), because validate()
-    accepts Dict[str, Any] and would raise an AttributeError rather than
-    a clean EnvironmentValidationError if passed a list or scalar.
-
-    Keeping this check here (not inline in the loader) preserves the
-    principle that all structural validation lives in the validator module.
-
-    Parameters
-    ----------
-    data : Any
-        The raw value returned by json.load().
-    source : str
-        Filename for error messages (e.g. 'web.json').
-
-    Raises
-    ------
-    EnvironmentValidationError
-        If the root JSON value is not a dict.
-    """
+    """Verify the parsed JSON root value is a dict."""
     if not isinstance(data, dict):
         raise EnvironmentValidationError(
             f"CONFIG ERROR: {source} — root JSON value must be an object "
@@ -97,16 +51,10 @@ def validate_structure(data: Any, source: str) -> None:
         )
 
 
-# ── Public helpers ────────────────────────────────────────────────────────────
-
 def get_tools_list(data: Dict[str, Any]) -> Optional[List]:
     """
-    Return the tools list from a config dict, accepting both 'tools'
-    (v1.5) and 'installers' (v1.0) as field names.
-
-    'tools' takes precedence when both keys are present.
-
-    Returns None if neither key exists.
+    Return the tools list, accepting both 'tools' (v1.5) and
+    'installers' (v1.0) as field names. Returns None if neither exists.
     """
     if "tools" in data:
         return data["tools"]
@@ -115,28 +63,18 @@ def get_tools_list(data: Dict[str, Any]) -> Optional[List]:
     return None
 
 
-# ── Primary validation entry point ────────────────────────────────────────────
-
 def validate(data: Dict[str, Any], source: str) -> None:
     """
     Validate a parsed environment configuration dict.
 
-    Runs all checks in order. Raises on the first failure encountered
-    so the error message is precise rather than listing every problem.
+    Performs structural and format checks only.  Installer-ID existence
+    checking is intentionally absent here — it belongs in
+    environment_loader, which sits above both this module and the
+    installer registry (see environment_loader._check_installer_ids).
 
-    Parameters
-    ----------
-    data : dict
-        Parsed JSON environment data.
-    source : str
-        Human-readable source identifier for error messages (e.g. 'web.json').
-
-    Raises
-    ------
-    EnvironmentValidationError
-        If any validation check fails.
+    Raises EnvironmentValidationError on the first failure encountered.
     """
-    env_id = data.get("id", source)   # best-effort for error messages
+    env_id = data.get("id", source)
 
     _check_required_base_fields(data, source, env_id)
     _check_tools_present(data, source, env_id)
@@ -146,27 +84,10 @@ def validate(data: Dict[str, Any], source: str) -> None:
     _check_tools_field(data, source, env_id)
     _check_tool_entry_types(data, source, env_id)
     _check_duplicate_tools(data, source, env_id)
-    _check_installer_ids(data, source, env_id)
 
 
 def validate_no_duplicates(env_id: str, seen_ids: set, source: str) -> None:
-    """
-    Check that env_id has not already been registered.
-
-    Parameters
-    ----------
-    env_id : str
-        The environment ID to check.
-    seen_ids : set
-        Set of already-registered environment IDs.
-    source : str
-        Filename for error messages.
-
-    Raises
-    ------
-    EnvironmentValidationError
-        If a duplicate ID is detected.
-    """
+    """Check that env_id has not already been registered."""
     if env_id in seen_ids:
         raise EnvironmentValidationError(
             f"CONFIG ERROR: duplicate environment id '{env_id}' "
@@ -177,10 +98,7 @@ def validate_no_duplicates(env_id: str, seen_ids: set, source: str) -> None:
 
 # ── Internal checks ───────────────────────────────────────────────────────────
 
-def _check_required_base_fields(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """Verify 'id' and 'name' are present."""
+def _check_required_base_fields(data, source, env_id):
     missing = REQUIRED_BASE_FIELDS - data.keys()
     if missing:
         raise EnvironmentValidationError(
@@ -189,10 +107,7 @@ def _check_required_base_fields(
         )
 
 
-def _check_tools_present(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """Verify either 'tools' or 'installers' is present."""
+def _check_tools_present(data, source, env_id):
     if get_tools_list(data) is None:
         raise EnvironmentValidationError(
             f"CONFIG ERROR: Environment '{env_id}' ({source}) — "
@@ -200,12 +115,9 @@ def _check_tools_present(
         )
 
 
-def _check_schema_version(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """If 'schema' is present, verify it is a supported version."""
+def _check_schema_version(data, source, env_id):
     if "schema" not in data:
-        return   # schema is optional in v1.5
+        return
     if data["schema"] not in SUPPORTED_SCHEMAS:
         raise EnvironmentValidationError(
             f"CONFIG ERROR: Environment '{env_id}' ({source}) — "
@@ -214,21 +126,7 @@ def _check_schema_version(
         )
 
 
-def _check_id_format(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """
-    Verify the environment ID conforms to the allowed format.
-
-    Rules (Phase 7):
-      - lowercase letters only
-      - digits and hyphens allowed after the first character
-      - must start with a lowercase letter
-      - no spaces, underscores, or uppercase letters
-
-    Valid:   web, python, data-science, python3
-    Invalid: Web, web dev, web_dev, 123env
-    """
+def _check_id_format(data, source, env_id):
     raw_id = data.get("id", "")
     if not isinstance(raw_id, str) or not _ID_PATTERN.match(raw_id):
         raise EnvironmentValidationError(
@@ -239,15 +137,7 @@ def _check_id_format(
         )
 
 
-def _check_field_types(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """
-    Verify string fields contain strings (Phase 3).
-
-    'id' and 'name' must be non-empty strings.
-    'description', if present, must be a string.
-    """
+def _check_field_types(data, source, env_id):
     for field in ("id", "name"):
         value = data.get(field)
         if not isinstance(value, str) or not value.strip():
@@ -256,7 +146,6 @@ def _check_field_types(
                 f"field '{field}' must be a non-empty string, "
                 f"got {type(value).__name__}."
             )
-
     if "description" in data and not isinstance(data["description"], str):
         raise EnvironmentValidationError(
             f"CONFIG ERROR: Environment '{env_id}' ({source}) — "
@@ -265,16 +154,9 @@ def _check_field_types(
         )
 
 
-def _check_tools_field(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """
-    Verify the tools list is a non-empty list (Phase 4).
-    Accepts both 'tools' and 'installers' field names.
-    """
+def _check_tools_field(data, source, env_id):
     tools = get_tools_list(data)
     field_name = "tools" if "tools" in data else "installers"
-
     if not isinstance(tools, list):
         raise EnvironmentValidationError(
             f"CONFIG ERROR: Environment '{env_id}' ({source}) — "
@@ -289,22 +171,10 @@ def _check_tools_field(
         )
 
 
-def _check_tool_entry_types(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """
-    Verify every entry in the tools list is a string (TL2).
-
-    Catches non-string entries (integers, booleans, lists, dicts, None)
-    before _check_duplicate_tools and _check_installer_ids run, preventing
-    a TypeError from unhashable types and giving a precise error message.
-
-    Example invalid: tools: [123, ["git"], true]
-    """
+def _check_tool_entry_types(data, source, env_id):
     tools = get_tools_list(data)
     if not isinstance(tools, list):
-        return   # already caught by _check_tools_field
-
+        return
     for index, tool_id in enumerate(tools):
         if not isinstance(tool_id, str):
             raise EnvironmentValidationError(
@@ -314,18 +184,10 @@ def _check_tool_entry_types(
             )
 
 
-def _check_duplicate_tools(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """
-    Detect duplicate tool entries within a single environment (Phase 6).
-
-    Example invalid: tools: ["git", "node", "git"]
-    """
+def _check_duplicate_tools(data, source, env_id):
     tools = get_tools_list(data)
     if not isinstance(tools, list):
-        return   # already caught by _check_tools_field
-
+        return
     seen: set = set()
     for tool_id in tools:
         if tool_id in seen:
@@ -335,21 +197,3 @@ def _check_duplicate_tools(
                 f"Each tool may only appear once in the tools list."
             )
         seen.add(tool_id)
-
-
-def _check_installer_ids(
-    data: Dict[str, Any], source: str, env_id: str
-) -> None:
-    """Verify every tool ID in the list is registered (Phase 5)."""
-    from devsetup.installers.manager import is_registered
-    tools = get_tools_list(data)
-    if not isinstance(tools, list):
-        return   # already caught
-
-    for tool_id in tools:
-        if not is_registered(tool_id):
-            raise EnvironmentValidationError(
-                f"CONFIG ERROR: installer '{tool_id}' not found in "
-                f"environment '{env_id}' ({source}). "
-                f"Use 'devsetup list' to see available environments."
-            )
