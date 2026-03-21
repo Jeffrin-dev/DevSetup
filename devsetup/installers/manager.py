@@ -6,46 +6,24 @@ Installer manager / registry and install engine.
 The CLI calls this module — it never calls individual installers directly.
 Contains no OS logic. Contains no environment loading logic.
 
-v1.3 additions (Tool Version Verification):
-  - _get_version()  : safely retrieves version from installer
-  - Version logged via [VERSION] after every install or skip
-  - InstallerResult carries .version field
-  - Summary displays version next to each tool name
-
-v1.3.1:
-  - Replaced fragile RuntimeError string matching with UnsupportedOSError.
-
-v1.3.2:
-  - Removed _verify_version() no-op wrapper
-  - list_tools() / tool_info() use _get_version() safety wrapper
-  - Sentinel blacklist replaced with digit-presence check
-
-v1.4 (Dependency Ordering — Phases 8–12):
-  - install_environment() now runs a full dependency resolution pipeline
-    before executing any installers:
-
-      load tools
-        ↓
-      build dependency graph       (dependency_resolver.build_graph)
-        ↓
-      validate dependency refs     (dependency_resolver._validate)
-        ↓
-      topological sort             (dependency_resolver.resolve)
-        ↓
-      log computed order           ([DEPS] log lines)
-        ↓
-      execute in resolved order
-        ↓
-      block tools whose deps failed (InstallerResult.block)
-        ↓
-      print summary (with Blocked section)
-
-  - Pipeline no longer stops on first failure; instead, tools whose
-    dependency failed are marked BLOCKED and skipped. Independent tools
-    continue to run. RuntimeError is raised at the end if any FAIL or
-    BLOCKED results were recorded.
-
-  - _print_summary() extended with Blocked section (Phase 11).
+v1.3: _get_version(), version logging, InstallerResult.version.
+v1.3.1: UnsupportedOSError replaces fragile string matching.
+v1.3.2: list_tools/tool_info use _get_version(); sentinel blacklist
+        replaced with digit-presence check.
+v1.4: Dependency resolution pipeline; BLOCKED results; independent tools
+      continue after a peer failure.
+v1.9 (DRY — Q2/Q3/Q4 fix):
+  The five except-handler blocks in install_tool() each previously
+  repeated the same three lines:
+      exit_code = ExitCode.<CODE>
+      category  = ErrorCategory.<CATEGORY>
+      fail(f"... | exit_code={exit_code} | category={category}")
+      return InstallerResult.fail(tool_name, str(exc), ...)
+  That pattern is now captured in a single private helper:
+      _handle_install_error(tool_name, exc, exit_code, category)
+  The five blocks are reduced to one-liner calls, eliminating ~40 lines
+  of duplication while keeping each except clause handling its specific
+  exception type.
 """
 
 import re as _re
@@ -89,7 +67,7 @@ _REGISTRY: Dict[str, Type[BaseInstaller]] = {
 }
 
 
-# ── Version helpers ───────────────────────────────────────────────────────────
+# ── Private helpers ───────────────────────────────────────────────────────────
 
 def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
     """
@@ -110,6 +88,47 @@ def _get_version(installer: BaseInstaller, tool_name: str) -> Optional[str]:
     except Exception as exc:
         debug(f"version() raised for {tool_name}: {exc}")
         return None
+
+
+def _handle_install_error(
+    tool_name: str,
+    exc: Exception,
+    exit_code: int,
+    category: str,
+) -> InstallerResult:
+    """
+    Log an installation failure and return a structured FAIL result.
+
+    v1.9 (DRY fix): Previously each of the five except-handler blocks in
+    install_tool() repeated these identical three lines before returning:
+
+        fail(f"{tool_name} installation failed | exit_code=... | category=...")
+        return InstallerResult.fail(tool_name, str(exc), exit_code=..., error_category=...)
+
+    This helper captures that repeated pattern once so each except clause
+    becomes a single call, keeping all failure paths uniformly structured.
+
+    Parameters
+    ----------
+    tool_name : str
+    exc : Exception
+        The caught exception; str(exc) becomes the result message.
+    exit_code : int
+        One of the ExitCode constants.
+    category : str
+        One of the ErrorCategory constants.
+
+    Returns
+    -------
+    InstallerResult with status FAIL.
+    """
+    fail(
+        f"{tool_name} installation failed "
+        f"| exit_code={exit_code} | category={category}"
+    )
+    return InstallerResult.fail(
+        tool_name, str(exc), exit_code=exit_code, error_category=category,
+    )
 
 
 # ── Registry helpers ──────────────────────────────────────────────────────────
@@ -142,8 +161,9 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
     """
     Detect and, if necessary, install a single tool.
 
-    Pipeline:
-        check → [skip | install] → version verification → result
+    Pipeline
+    --------
+    check → detect → [skip | install] → version verify → result
 
     Parameters
     ----------
@@ -195,72 +215,43 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
         success(f"{tool_name} installed successfully.")
 
     except PackageManagerError as exc:
-        exit_code = ExitCode.PACKAGE_MANAGER_FAILURE
-        category  = ErrorCategory.PACKAGE_MANAGER_ERROR
-        msg = (
-            f"{tool_name} installation failed: package manager error — {exc} "
-            f"| exit_code={exit_code} | category={category}"
-        )
-        fail(msg)
-        return InstallerResult.fail(
-            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        return _handle_install_error(
+            tool_name, exc,
+            ExitCode.PACKAGE_MANAGER_FAILURE,
+            ErrorCategory.PACKAGE_MANAGER_ERROR,
         )
 
     except FileNotFoundError as exc:
-        exit_code = ExitCode.INSTALLATION_FAILURE
-        category  = ErrorCategory.COMMAND_NOT_FOUND
-        msg = (
-            f"{tool_name} installation failed: command not found — {exc} "
-            f"| exit_code={exit_code} | category={category}"
-        )
-        fail(msg)
-        return InstallerResult.fail(
-            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        return _handle_install_error(
+            tool_name, exc,
+            ExitCode.INSTALLATION_FAILURE,
+            ErrorCategory.COMMAND_NOT_FOUND,
         )
 
     except UnsupportedOSError as exc:
-        exit_code = ExitCode.UNSUPPORTED_OS
-        category  = ErrorCategory.OS_NOT_SUPPORTED
-        msg = (
-            f"{tool_name} installation failed: unsupported OS — {exc} "
-            f"| exit_code={exit_code} | category={category}"
-        )
-        fail(msg)
-        return InstallerResult.fail(
-            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        return _handle_install_error(
+            tool_name, exc,
+            ExitCode.UNSUPPORTED_OS,
+            ErrorCategory.OS_NOT_SUPPORTED,
         )
 
     except RuntimeError as exc:
-        exit_code = ExitCode.INSTALLATION_FAILURE
-        category  = ErrorCategory.INSTALLER_FAILURE
-        msg = (
-            f"{tool_name} installation failed: {exc} "
-            f"| exit_code={exit_code} | category={category}"
-        )
-        fail(msg)
-        return InstallerResult.fail(
-            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        return _handle_install_error(
+            tool_name, exc,
+            ExitCode.INSTALLATION_FAILURE,
+            ErrorCategory.INSTALLER_FAILURE,
         )
 
     except Exception as exc:
-        exit_code = ExitCode.INSTALLATION_FAILURE
-        category  = ErrorCategory.INSTALLER_FAILURE
-        msg = (
-            f"{tool_name} installation failed: {exc} "
-            f"| exit_code={exit_code} | category={category}"
-        )
-        fail(msg)
-        return InstallerResult.fail(
-            tool_name, str(exc), exit_code=exit_code, error_category=category,
+        return _handle_install_error(
+            tool_name, exc,
+            ExitCode.INSTALLATION_FAILURE,
+            ErrorCategory.INSTALLER_FAILURE,
         )
 
     # ── Post-install version verification ──────────────────────────────────
     ver = _get_version(installer, tool_name)
     if ver is None:
-        vfail_msg = (
-            f"{tool_name} version verification failed after installation. "
-            f"The tool may not have installed correctly."
-        )
         fail(
             f"[VERSION CHECK FAILED] {tool_name} "
             f"| exit_code={ExitCode.VERIFICATION_FAILURE} "
@@ -268,14 +259,15 @@ def install_tool(tool_name: str, force: bool = False) -> InstallerResult:
         )
         return InstallerResult.fail(
             tool_name,
-            vfail_msg,
+            f"{tool_name} version verification failed after installation.",
             exit_code=ExitCode.VERIFICATION_FAILURE,
             error_category=ErrorCategory.VERIFICATION_FAILURE,
         )
 
     version_log(ver)
-    ok_msg = f"{tool_name} installed successfully."
-    return InstallerResult.success(tool_name, ok_msg, version=ver)
+    return InstallerResult.success(
+        tool_name, f"{tool_name} installed successfully.", version=ver,
+    )
 
 
 def install_environment(
@@ -287,23 +279,13 @@ def install_environment(
     """
     Install all tools in an environment, respecting dependency order.
 
-    v1.4 Pipeline
-    -------------
+    Pipeline
+    --------
     1. Detect OS and package manager
-    2. Build dependency graph from installer declarations
-    3. Validate all dependency references (Phase 7)
-    4. Topological sort → deterministic install order (Phase 5)
-    5. Log computed order (Phase 12)
-    6. Execute installers in resolved order
-       - If a tool's dependency failed/was blocked → mark BLOCKED, skip it
-       - Independent tools continue even after a failure (Phase 10)
-    7. Print summary (with Blocked section — Phase 11)
-    8. Raise RuntimeError if any failures or blocked tools exist
-
-    v1.7 — Non-interactive mode:
-    When yes_mode=True the pre-install confirmation is auto-accepted and
-    logged as [AUTO]. Passes through to confirm() in prompt.py so all
-    future confirmation points are also auto-accepted.
+    2. Resolve dependency order (topological sort)
+    3. Execute installers; block dependents of failed tools
+    4. Print summary
+    5. Raise RuntimeError if any failures or blocked tools exist
 
     Parameters
     ----------
@@ -311,14 +293,7 @@ def install_environment(
     force : bool
     env_name : str | None
     yes_mode : bool
-        When True, suppress confirmation prompts and proceed automatically.
-
-    Raises
-    ------
-    DependencyError
-        If dependency validation or cycle detection fails.
-    RuntimeError
-        If any tool installation failed or was blocked.
+        When True, suppress confirmation prompts (--yes flag).
     """
     # ── 1. OS / PM detection ───────────────────────────────────────────────
     try:
@@ -333,14 +308,10 @@ def install_environment(
     if force:
         warn("--force enabled. All tools will be reinstalled.")
 
-    # ── v1.7: Non-interactive mode logging ────────────────────────────────
-    # Log once that non-interactive mode is active. The engine does not call
-    # confirm() — that is a CLI-layer utility. The engine's responsibility is
-    # to proceed without prompts and record the [AUTO] audit line.
     if yes_mode:
         log_auto("Non-interactive mode active (--yes). All prompts auto-accepted.")
 
-    # ── 2–4. Dependency resolution (Phases 4–6) ────────────────────────────
+    # ── 2. Dependency resolution ───────────────────────────────────────────
     dep_order("Resolving dependencies...")
     log_verbose("DependencyResolver: starting resolution")
     try:
@@ -349,7 +320,6 @@ def install_environment(
         error(str(exc))
         raise
 
-    # ── 5. Log computed install order (Phase 12) ───────────────────────────
     if ordered_tools:
         dep_order("Computed install order:")
         for i, t in enumerate(ordered_tools, 1):
@@ -361,7 +331,7 @@ def install_environment(
     else:
         dep_order("No tools to install.")
 
-    # ── 6. Execute in resolved order (Phases 8–10) ────────────────────────
+    # ── 3. Execute in resolved order ───────────────────────────────────────
     summary = InstallSummary(env_name=env_name)
     failed_or_blocked: Set[str] = set()
     total = len(ordered_tools)
@@ -369,7 +339,6 @@ def install_environment(
     for index, tool_name in enumerate(ordered_tools, start=1):
         info(f"[{index}/{total}] Installing {tool_name} ({current_os} / {current_pm})")
 
-        # Check if any dependency failed or was blocked (Phase 10)
         blocking_dep = get_blocked(tool_name, graph, failed_or_blocked)
         if blocking_dep is not None:
             block_result = InstallerResult.block(tool_name, blocking_dep)
@@ -380,19 +349,18 @@ def install_environment(
                 f"| exit_code={ExitCode.DEPENDENCY_BLOCKED} "
                 f"| category={ErrorCategory.DEPENDENCY_BLOCKED}"
             )
-            continue  # Don't stop; independent tools continue
+            continue
 
         result = install_tool(tool_name, force=force)
         summary.record(result)
 
         if result.failed:
             failed_or_blocked.add(tool_name)
-            # Do NOT break — let independent tools run (v1.4 behaviour)
 
-    # ── 7. Print summary (Phase 11) ────────────────────────────────────────
+    # ── 4. Print summary ───────────────────────────────────────────────────
     _print_summary(summary)
 
-    # ── 8. Raise if anything went wrong ───────────────────────────────────
+    # ── 5. Raise on failure ────────────────────────────────────────────────
     if summary.has_failure or summary.has_blocked:
         parts = []
         if summary.has_failure:
@@ -402,7 +370,10 @@ def install_environment(
                     f"(exit_code={fr.exit_code}, category={fr.error_category})"
                 )
         if summary.has_blocked:
-            parts.append(f"{len(summary.blocked)} tool(s) blocked: {', '.join(summary.blocked)}")
+            parts.append(
+                f"{len(summary.blocked)} tool(s) blocked: "
+                f"{', '.join(summary.blocked)}"
+            )
         raise RuntimeError(
             "Installation incomplete: " + "; ".join(parts) + "."
         )
@@ -411,31 +382,7 @@ def install_environment(
 
 
 def _print_summary(summary: InstallSummary) -> None:
-    """
-    Print the installation report.
-
-    v1.3 — version strings displayed next to each tool name.
-    v1.4 — Blocked section added (Phase 11).
-
-    Format
-    ------
-        Environment: Web
-
-        Installation Summary
-        --------------------
-        Installed (2):
-          git (2.43.0)
-          node (20.11.1)
-
-        Skipped (1):
-          vscode (1.86.0)
-
-        Failed:
-          python  (exit_code=5, category=VERIFICATION_FAILURE)
-
-        Blocked (1):
-          vscode  (blocked by: node)
-    """
+    """Print the installation report to stdout via the logger."""
     info("")
 
     if summary.env_name:
@@ -445,7 +392,6 @@ def _print_summary(summary: InstallSummary) -> None:
     info("Installation Summary")
     info("--------------------")
 
-    # Installed
     n_installed = len(summary.installed)
     if n_installed:
         info(f"Installed ({n_installed}):")
@@ -456,10 +402,8 @@ def _print_summary(summary: InstallSummary) -> None:
     else:
         info("Installed:")
         info("  none")
-
     info("")
 
-    # Skipped
     n_skipped = len(summary.skipped)
     if n_skipped:
         info(f"Skipped ({n_skipped}):")
@@ -470,13 +414,12 @@ def _print_summary(summary: InstallSummary) -> None:
     else:
         info("Skipped:")
         info("  none")
-
     info("")
 
-    # Failed
     all_failures = summary.failed_results
     if all_failures:
-        info(f"Failed ({len(all_failures)}):" if len(all_failures) > 1 else "Failed:")
+        label = f"Failed ({len(all_failures)}):" if len(all_failures) > 1 else "Failed:"
+        info(label)
         for fr in all_failures:
             info(
                 f"  {fr.installer_id}  "
@@ -485,10 +428,8 @@ def _print_summary(summary: InstallSummary) -> None:
     else:
         info("Failed:")
         info("  none")
-
     info("")
 
-    # Blocked (v1.4 — Phase 11)
     blocked_list = summary.blocked
     if blocked_list:
         info(f"Blocked ({len(blocked_list)}):")
@@ -502,17 +443,13 @@ def _print_summary(summary: InstallSummary) -> None:
     else:
         info("Blocked:")
         info("  none")
-
     info("")
 
 
 # ── Utility functions ─────────────────────────────────────────────────────────
 
 def list_tools() -> Dict[str, str]:
-    """
-    Return a dict of tool → version for all registered tools.
-    Uses _get_version() so exceptions cannot crash the command.
-    """
+    """Return a dict of tool → version for all registered tools."""
     result = {}
     for name, cls in _REGISTRY.items():
         installer = cls()
@@ -526,7 +463,6 @@ def tool_dependencies(tool_name: str) -> List[str]:
     Return the declared dependency list for a registered tool.
 
     Read-only — never instantiates the installer or calls detect().
-    Returns an empty list if the tool has no dependencies.
 
     Raises
     ------
@@ -543,10 +479,7 @@ def tool_dependencies(tool_name: str) -> List[str]:
 
 
 def tool_info(tool_name: str) -> Dict[str, str]:
-    """
-    Return detection status, version, and dependencies for a single tool.
-    Uses _get_version() so exceptions cannot crash the command.
-    """
+    """Return detection status, version, and dependencies for a single tool."""
     installer = get_installer(tool_name)
     detected  = installer.detect()
     ver       = _get_version(installer, tool_name) if detected else None
