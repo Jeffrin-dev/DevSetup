@@ -3,12 +3,10 @@ devsetup.system.package_managers.apt_manager
 ---------------------------------------------
 Package manager wrapper for apt (Debian / Ubuntu).
 
-Commands:
-  update:  sudo apt-get update
-  install: sudo apt-get install -y <package>
+v1.9 (Stability Pass):
+  _run() removed — inherited from BasePackageManager.
 """
 
-import subprocess
 from devsetup.system.package_managers.base import BasePackageManager, PackageManagerError
 from devsetup.utils.logger import info
 
@@ -25,23 +23,3 @@ class AptManager(BasePackageManager):
         """Install a package using apt-get."""
         info(f"Installing {package_name} using apt...")
         self._run(["sudo", "apt-get", "install", "-y", package_name])
-
-    def _run(self, cmd: list) -> None:
-        """Execute a command, translating errors to PackageManagerError."""
-        try:
-            subprocess.run(cmd, check=True)
-        except FileNotFoundError:
-            raise PackageManagerError(
-                f"apt-get binary not found — is apt installed?",
-                pm_exit_code=-1,
-            )
-        except PermissionError:
-            raise PackageManagerError(
-                f"Permission denied running: {' '.join(cmd)}",
-                pm_exit_code=-1,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise PackageManagerError(
-                f"apt command failed: {' '.join(cmd)}",
-                pm_exit_code=exc.returncode,
-            )
